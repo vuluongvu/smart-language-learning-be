@@ -25,22 +25,23 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ? exception.getStatus()
         : HttpStatus.INTERNAL_SERVER_ERROR;
 
-    // Log ở server, không trả thông tin nội bộ cho client
+    const rawUrl = String(httpAdapter.getRequestUrl(request) ?? '');
+    const safePath = rawUrl.split('?')[0] || '/';
+
+    // Log ở server, không trả thông tin nội bộ cho client or query-string tokens
     if (status >= 500) {
       this.logger.error(
-        `${request.method} ${httpAdapter.getRequestUrl(request)} - ${status}`,
+        `${request.method} ${safePath} - ${status}`,
         exception instanceof Error ? exception.stack : String(exception),
       );
     } else {
-      this.logger.warn(
-        `${request.method} ${httpAdapter.getRequestUrl(request)} - ${status}`,
-      );
+      this.logger.warn(`${request.method} ${safePath} - ${status}`);
     }
 
     const responseBody = {
       statusCode: status,
       timestamp: new Date().toISOString(),
-      path: httpAdapter.getRequestUrl(request),
+      path: safePath,
       message:
         status === HttpStatus.INTERNAL_SERVER_ERROR
           ? 'Internal server error'

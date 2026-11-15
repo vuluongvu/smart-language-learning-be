@@ -1,83 +1,121 @@
 # OpenQuiz Backend (`smart-language-learning-be`)
 
-Backend API cho nền tảng tự học tiếng Anh cá nhân hóa **OpenQuiz**, xây dựng bằng **NestJS + TypeScript + MySQL 8.4 + TypeORM**.
+Backend REST API for the **OpenQuiz** personalized English self-learning platform MVP, built with **NestJS + TypeScript (ESM) + MySQL 8.4 + TypeORM**.
+
+---
 
 ## Stack
 
-- **Runtime:** Node.js (`v24+`), TypeScript (`nodenext` ESM)
+- **Runtime:** Node.js `v24+`, TypeScript (`nodenext`)
 - **Framework:** NestJS `12` (`@nestjs/platform-express`)
-- **Database:** MySQL `8.4` + TypeORM
-- **API & Docs:** REST `/api/v1`, Swagger `/api/docs`
-- **Validation & Security:** `class-validator`, `helmet`, `@nestjs/throttler`, `passport-jwt`, `bcrypt`
-- **Testing & Lint:** Vitest, Supertest, Oxlint, Prettier
+- **Database & Migrations:** MySQL `8.4` + TypeORM migrations (`synchronize: false` in production)
+- **Authentication:** Email + Password (`bcrypt`), JWT access + rotating refresh sessions, server-verified Google OAuth (`google-auth-library`)
+- **Security & Validation:** `helmet`, `@nestjs/throttler` rate limiting, strict `ValidationPipe` (`whitelist`, `forbidNonWhitelisted`), ownership IDOR guards, configured CORS origin allowlist
+- **Testing & Quality:** Vitest (`unit` & `e2e`), Supertest, Oxlint, Prettier
+- **Zero Paid AI Policy:** `AI_PROVIDER=none` by default — core MVP runs offline/locally with deterministic quiz drafting and spaced repetition scheduling
 
-## Yêu cầu môi trường
+---
 
-- Node.js >= 24
-- npm >= 11
-- Docker & Docker Compose (hoặc MySQL 8.4 local)
+## Prerequisites
 
-## Cài đặt & Chạy local
+- Node.js `>= 24`
+- npm `>= 11`
+- Docker & Docker Compose (recommended for local MySQL 8.4) or local MySQL 8.4 instance
 
-1. Cài dependencies:
+---
 
-```bash
-npm ci
-```
+## Local Setup & Runbook
 
-2. Tạo file `.env` từ `.env.example` và điền thông tin kết nối MySQL + `JWT_SECRET` (tối thiểu 32 ký tự):
+1. **Install dependencies**
 
-```bash
-cp .env.example .env
-```
+   ```bash
+   npm ci
+   ```
 
-3. Khởi động MySQL bằng Docker Compose (nếu dùng Docker):
+2. **Create `.env` from `.env.example`**
 
-```bash
-docker compose up -d mysql
-```
+   ```bash
+   cp .env.example .env
+   ```
 
-4. Chạy migration (từ Phase 1 trở đi):
+   Key environment variables:
+   - `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_NAME`: MySQL connection settings
+   - `CORS_ORIGIN`: Comma-separated allowed frontend origins (e.g. `http://localhost:4200`)
+   - `JWT_SECRET`, `JWT_REFRESH_SECRET`: Strong random secrets (`>= 32` characters)
+   - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`: Optional Google OAuth credentials
+   - `AI_PROVIDER`: Keep `none` for zero-cost MVP
+   - `ENABLE_SWAGGER`: Optional (`true` enables `/api/docs` outside dev; dev enables Swagger automatically)
 
-```bash
-npm run migration:run
-```
+3. **Start MySQL 8.4 via Docker Compose**
 
-5. Khởi động backend ở chế độ development:
+   ```bash
+   docker compose up -d mysql
+   ```
 
-```bash
-npm run start:dev
-```
+4. **Apply database migrations**
 
-- API base URL: `http://localhost:3000/api/v1`
-- Swagger docs: `http://localhost:3000/api/docs`
+   ```bash
+   npm run migration:run
+   npm run migration:show
+   ```
 
-## Scripts chính
+5. **Optional (Development Only): Seed realistic demo data**
 
-| Script | Mô tả |
+   > Never runs in `NODE_ENV=production`. Safe and idempotent to run locally for manual QA.
+
+   ```bash
+   npm run seed
+   ```
+
+   Creates demo learner credentials:
+   - Email: `demo@openquiz.local`
+   - Password: `DemoPassword123!`
+
+6. **Start the API server**
+
+   ```bash
+   npm run start:dev
+   ```
+
+   - API Base URL: `http://localhost:3000/api/v1`
+   - Health Check: `GET http://localhost:3000/api/v1/health`
+   - Swagger API Docs (development): `http://localhost:3000/api/docs`
+
+---
+
+## Google OAuth Configuration (`AUTH-03`)
+
+1. Create an **OAuth 2.0 Client ID** (`Web application`) in Google Cloud Console.
+2. Add Authorized JavaScript origins:
+   - `http://localhost:4200` (and your production origin when deployed)
+3. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in backend `.env`, and set only `googleClientId` in frontend `environment*.ts`. Never place `GOOGLE_CLIENT_SECRET` in frontend assets.
+4. ID tokens are verified server-side via `google-auth-library`. Existing password accounts cannot be hijacked by matching email alone — users must authenticate with their password and link Google explicitly via `POST /api/v1/auth/google/link`.
+
+---
+
+## Scripts
+
+| Script | Description |
 | --- | --- |
-| `npm run build` | Compile TypeScript ra `dist/` |
-| `npm run start:dev` | Chạy dev server với watch mode |
-| `npm run lint` | Kiểm tra lint bằng `oxlint` |
-| `npm run format:check` | Kiểm tra định dạng Prettier |
-| `npm test` | Chạy unit tests bằng Vitest |
-| `npm run test:e2e` | Chạy e2e tests |
-| `npm run migration:run` | Build và chạy TypeORM migrations |
-| `npm run migration:revert` | Hoàn tác migration gần nhất |
-| `npm run migration:show` | Kiểm tra trạng thái migrations |
+| `npm run build` | Compile TypeScript into `dist/` |
+| `npm run start:dev` | Run NestJS in watch mode |
+| `npm run lint` | Run Oxlint checks across `src/` and `test/` |
+| `npm run format` / `format:check` | Format or verify Prettier style |
+| `npm test` | Run unit test suite (Vitest) |
+| `npm run test:e2e` | Run full end-to-end integration tests against MySQL |
+| `npm run migration:run` | Build and apply pending TypeORM migrations |
+| `npm run migration:show` | Show applied vs pending migrations |
+| `npm run migration:revert` | Revert the latest migration |
+| `npm run seed` | Seed local development demo data (blocked in `production`) |
 
-## Cấu hình Google OAuth (AUTH-03)
+---
 
-1. Tạo OAuth 2.0 Client ID (loại **Web application**) trong Google Cloud Console.
-2. Cấu hình **Authorized JavaScript origins**:
-   - Local development: `http://localhost:4200`
-3. Cấu hình **Authorized redirect URIs** (nếu dùng redirect flow / popup callback):
-   - Local development: `http://localhost:4200` và `http://localhost:4200/login`
-4. Điền `GOOGLE_CLIENT_ID` và `GOOGLE_CLIENT_SECRET` vào `.env` của backend (chỉ đặt `GOOGLE_CLIENT_ID` ở frontend `environment*.ts`, không bao giờ đặt `GOOGLE_CLIENT_SECRET` ở frontend).
-5. Backend xác minh Google ID token server-side qua `google-auth-library`. Nếu email đã tồn tại bằng tài khoản mật khẩu, người dùng phải đăng nhập bằng mật khẩu rồi liên kết Google qua `POST /api/v1/auth/google/link`.
+## Implemented MVP API Modules
 
-## Ghi chú kiến trúc & MVP
-
-- **Database:** Sử dụng MySQL 8.4 (`number` auto-increment primary keys), lưu timestamp theo UTC (`timezone: 'Z'`), `synchronize` tắt mặc định (`DB_SYNCHRONIZE=false`) và bắt buộc tắt ở `production`.
-- **Zero API Cost:** AI provider tắt mặc định (`AI_PROVIDER=none`), không có paid fallback.
-- **Git workflow:** Phát triển theo nhánh feature, kiểm tra `build`, `lint`, `test` trước khi merge vào `develop` và `master`.
+- **Health**: `GET /api/v1/health`
+- **Auth & Profile**: `/api/v1/auth/*`, `/api/v1/users/me*` (`timezone`, `isLeaderboardVisible`, `password`, account deletion)
+- **Languages**: `/api/v1/languages` (English active for MVP)
+- **Topics & Vocabulary**: `/api/v1/topics`, `/api/v1/vocabulary` (many-to-many topics, search/filter/pagination, duplicate hint)
+- **Quizzes & Attempts**: `/api/v1/quizzes`, `/api/v1/quizzes/draft-from-vocabulary`, `/api/v1/quizzes/:id/attempts`, `/api/v1/attempts/:id/*` (MCQ, Word Meaning, Fill-in-the-Blank, immutable snapshots, save vocabulary from quiz)
+- **Flashcards & SM-2 SRS**: `/api/v1/flashcards/due`, `/api/v1/flashcard-sessions/*`
+- **Progress, Streaks & Leaderboard**: `/api/v1/progress/overview`, `/api/v1/progress/history`, `/api/v1/streaks/me`, `/api/v1/streaks/calendar`, `/api/v1/leaderboard/streaks`

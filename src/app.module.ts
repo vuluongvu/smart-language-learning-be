@@ -48,6 +48,7 @@ import Joi from 'joi';
         GOOGLE_CLIENT_ID: Joi.string().allow('').optional(),
         GOOGLE_CLIENT_SECRET: Joi.string().allow('').optional(),
         AI_PROVIDER: Joi.string().valid('none').default('none'),
+        ENABLE_SWAGGER: Joi.boolean().default(false),
       }),
     }),
 
