@@ -22,13 +22,24 @@ import Joi from 'joi';
 
       // Validation schema for environment variables
       validationSchema: Joi.object({
+        NODE_ENV: Joi.string()
+          .valid('development', 'test', 'production')
+          .default('development'),
+        PORT: Joi.number().port().default(3000),
+        CORS_ORIGIN: Joi.string().default('http://localhost:4200'),
         DB_HOST: Joi.string().required(),
         DB_PORT: Joi.number().port().required(),
         DB_USERNAME: Joi.string().required(),
         DB_PASSWORD: Joi.string().allow('').required(),
         DB_NAME: Joi.string().required(),
+        DB_SYNCHRONIZE: Joi.boolean().default(false),
         JWT_SECRET: Joi.string().min(32).required(),
-        JWT_EXPIRATION: Joi.string().default('24h').required(),
+        JWT_EXPIRATION: Joi.string().default('15m'),
+        JWT_REFRESH_SECRET: Joi.string().min(32).allow('').optional(),
+        JWT_REFRESH_EXPIRATION: Joi.string().default('7d'),
+        GOOGLE_CLIENT_ID: Joi.string().allow('').optional(),
+        GOOGLE_CLIENT_SECRET: Joi.string().allow('').optional(),
+        AI_PROVIDER: Joi.string().valid('none').default('none'),
       }),
     }),
 
@@ -40,20 +51,26 @@ import Joi from 'joi';
       },
     ]),
 
-
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        type: 'mysql',
-        host: configService.getOrThrow<string>('DB_HOST'),
-        port: configService.getOrThrow<number>('DB_PORT'),
-        username: configService.getOrThrow<string>('DB_USERNAME'),
-        password: configService.getOrThrow<string>('DB_PASSWORD'),
-        database: configService.getOrThrow<string>('DB_NAME'),
-        autoLoadEntities: true,
-        synchronize: true, // only for development, set to false in production
-      }),
+      useFactory: (configService: ConfigService) => {
+        const isProduction =
+          configService.get<string>('NODE_ENV') === 'production';
+        const allowSync = configService.get<boolean>('DB_SYNCHRONIZE') === true;
+
+        return {
+          type: 'mysql',
+          host: configService.getOrThrow<string>('DB_HOST'),
+          port: configService.getOrThrow<number>('DB_PORT'),
+          username: configService.getOrThrow<string>('DB_USERNAME'),
+          password: configService.getOrThrow<string>('DB_PASSWORD'),
+          database: configService.getOrThrow<string>('DB_NAME'),
+          autoLoadEntities: true,
+          synchronize: !isProduction && allowSync,
+          timezone: 'Z',
+        };
+      },
     }),
     UsersModule,
     AuthModule,

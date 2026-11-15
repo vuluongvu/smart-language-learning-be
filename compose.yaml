@@ -1,18 +1,27 @@
 services:
   app:
     build: .
-    container_name: skeleton-app # rename this
+    container_name: openquiz-app
     command: npm run start:dev
     ports:
       - '3001:3000'
     environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: ${PORT:-3000}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:4200}
       DB_HOST: mysql
       DB_PORT: 3306
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME}
+      DB_SYNCHRONIZE: ${DB_SYNCHRONIZE:-false}
       JWT_SECRET: ${JWT_SECRET}
-      JWT_EXPIRATION: ${JWT_EXPIRATION}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-15m}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-}
+      JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION:-7d}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      AI_PROVIDER: ${AI_PROVIDER:-none}
     depends_on:
       mysql:
         condition: service_healthy
@@ -20,7 +29,7 @@ services:
 
   mysql:
     image: mysql:8.4
-    container_name: skeleton-mysql # rename this
+    container_name: openquiz-mysql
     ports:
       - '3311:3306'
     environment:
@@ -29,7 +38,7 @@ services:
       MYSQL_USER: ${DB_USERNAME}
       MYSQL_PASSWORD: ${DB_PASSWORD}
     volumes:
-      - skeleton_mysql_data:/var/lib/mysql # rename this
+      - openquiz_mysql_data:/var/lib/mysql
     healthcheck:
       test:
         - CMD-SHELL
@@ -40,4 +49,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  skeleton_mysql_data: # rename this
+  openquiz_mysql_data:
