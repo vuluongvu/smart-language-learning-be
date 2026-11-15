@@ -10,6 +10,9 @@ import { TopicsModule } from './topics/topics.module.js';
 import { VocabularyModule } from './vocabulary/vocabulary.module.js';
 import { QuizzesModule } from './quizzes/quizzes.module.js';
 import { FlashcardsModule } from './flashcards/flashcards.module.js';
+import { StreaksModule } from './streaks/streaks.module.js';
+import { ProgressModule } from './progress/progress.module.js';
+import { LeaderboardModule } from './leaderboard/leaderboard.module.js';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor.js';
 import { AllExceptionsFilter } from './common/exception-filters/all-exceptions-filter.filter.js';
 import { RequestMiddleware } from './common/middleware/request-id.middleware.js';
@@ -84,6 +87,9 @@ import Joi from 'joi';
     VocabularyModule,
     QuizzesModule,
     FlashcardsModule,
+    StreaksModule,
+    ProgressModule,
+    LeaderboardModule,
   ],
   controllers: [AppController],
   providers: [

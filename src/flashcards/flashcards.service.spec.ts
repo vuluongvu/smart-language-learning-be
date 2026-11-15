@@ -7,6 +7,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { vi } from 'vitest';
+import { StreaksService } from '../streaks/streaks.service.js';
 import { TopicVocabulary } from '../topics/entities/topic-vocabulary.entity.js';
 import { Topic } from '../topics/entities/topic.entity.js';
 import { TopicsService } from '../topics/topics.service.js';
@@ -112,6 +113,10 @@ describe('FlashcardsService', () => {
         { provide: getRepositoryToken(TopicVocabulary), useValue: tvRepo },
         { provide: TopicsService, useValue: topicsService },
         { provide: VocabularyService, useValue: vocabularyService },
+        {
+          provide: StreaksService,
+          useValue: { recordQualifiedActivity: vi.fn() },
+        },
         { provide: DataSource, useValue: dataSource },
       ],
     }).compile();
@@ -280,7 +285,7 @@ describe('FlashcardsService', () => {
       save: vi.fn(async (x) => x),
     };
     const txVocabRepo = {
-      findOneBy: vi.fn().mockResolvedValue(v1),
+      findOne: vi.fn().mockResolvedValue(v1),
     };
     const txProgressRepo = {
       findOne: vi.fn().mockResolvedValue(null),

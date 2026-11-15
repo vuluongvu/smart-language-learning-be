@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { StreaksModule } from '../streaks/streaks.module.js';
 import { TopicVocabulary } from '../topics/entities/topic-vocabulary.entity.js';
 import { Topic } from '../topics/entities/topic.entity.js';
 import { TopicsModule } from '../topics/topics.module.js';
@@ -24,6 +25,7 @@ import { ReviewSchedulerService } from './review-scheduler.service.js';
     ]),
     TopicsModule,
     VocabularyModule,
+    StreaksModule,
   ],
   controllers: [FlashcardsController],
   providers: [FlashcardsService, ReviewSchedulerService],

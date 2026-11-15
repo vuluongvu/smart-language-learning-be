@@ -8,6 +8,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { PaginationMeta } from '../common/dto/pagination-query.dto.js';
 import { assertResourceOwnership } from '../common/guards/ownership.guard.js';
+import { ActivitySourceType } from '../streaks/entities/learning-activity-event.entity.js';
+import { StreaksService } from '../streaks/streaks.service.js';
 import { TopicVocabulary } from '../topics/entities/topic-vocabulary.entity.js';
 import { Topic } from '../topics/entities/topic.entity.js';
 import { TopicsService } from '../topics/topics.service.js';
@@ -100,6 +102,7 @@ export class FlashcardsService {
     private readonly topicsService: TopicsService,
     private readonly vocabularyService: VocabularyService,
     private readonly scheduler: ReviewSchedulerService,
+    private readonly streaksService: StreaksService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -385,7 +388,10 @@ export class FlashcardsService {
           );
         }
 
-        const vocabItem = await vocabRepo.findOneBy({ id: vocabularyId });
+        const vocabItem = await vocabRepo.findOne({
+          where: { id: vocabularyId },
+          lock: { mode: 'pessimistic_write' },
+        });
         if (!vocabItem) {
           throw new NotFoundException('Vocabulary item not found');
         }
@@ -402,7 +408,6 @@ export class FlashcardsService {
 
         let progress = await progressRepo.findOne({
           where: { userId, vocabularyId },
-          lock: { mode: 'pessimistic_write' },
         });
 
         const scheduled = this.scheduler.schedule(
@@ -502,6 +507,15 @@ export class FlashcardsService {
       session.status = FlashcardSessionStatus.COMPLETED;
       session.completedAt = new Date();
       await sessionRepo.save(session);
+
+      if (session.isStreakEligible) {
+        await this.streaksService.recordQualifiedActivity(manager, {
+          userId,
+          sourceType: ActivitySourceType.FLASHCARD_SESSION,
+          sourceId: session.id,
+          occurredAt: session.completedAt,
+        });
+      }
     });
 
     return this.getSession(userId, sessionId);
