@@ -6,6 +6,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module.js';
 import { LanguagesModule } from './languages/languages.module.js';
+import { TopicsModule } from './topics/topics.module.js';
+import { VocabularyModule } from './vocabulary/vocabulary.module.js';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor.js';
 import { AllExceptionsFilter } from './common/exception-filters/all-exceptions-filter.filter.js';
 import { RequestMiddleware } from './common/middleware/request-id.middleware.js';
@@ -76,6 +78,8 @@ import Joi from 'joi';
     UsersModule,
     AuthModule,
     LanguagesModule,
+    TopicsModule,
+    VocabularyModule,
   ],
   controllers: [AppController],
   providers: [
