@@ -327,6 +327,29 @@ export class VocabularyService {
     return { message: 'Vocabulary item deleted successfully', id: item.id };
   }
 
+  async findOwnedItemsByIds(
+    userId: number,
+    vocabularyIds: number[],
+  ): Promise<VocabularyItem[]> {
+    if (vocabularyIds.length === 0) {
+      return [];
+    }
+    const uniqueIds = Array.from(new Set(vocabularyIds));
+    const items = await this.vocabularyRepository.findBy({ id: In(uniqueIds) });
+
+    if (items.length !== uniqueIds.length) {
+      throw new NotFoundException(
+        'One or more vocabulary items were not found',
+      );
+    }
+
+    for (const item of items) {
+      assertResourceOwnership(item.userId, userId, 'Vocabulary item');
+    }
+
+    return items;
+  }
+
   private async findOwnedItem(
     userId: number,
     id: number,
