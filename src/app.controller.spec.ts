@@ -18,5 +18,12 @@ describe('AppController', () => {
     it('should return "Hello World!"', () => {
       expect(appController.getHello()).toBe('Hello World!');
     });
+
+    it('should return health status payload', () => {
+      const result = appController.getHealth();
+      expect(result.status).toBe('ok');
+      expect(typeof result.timestamp).toBe('string');
+      expect(Number.isNaN(Date.parse(result.timestamp))).toBe(false);
+    });
   });
 });
