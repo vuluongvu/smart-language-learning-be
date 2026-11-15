@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { LanguagesModule } from '../languages/languages.module.js';
+import { StreaksModule } from '../streaks/streaks.module.js';
 import { TopicVocabulary } from '../topics/entities/topic-vocabulary.entity.js';
 import { Topic } from '../topics/entities/topic.entity.js';
 import { TopicsModule } from '../topics/topics.module.js';
@@ -31,6 +32,7 @@ import { QuizzesService } from './quizzes.service.js';
     TopicsModule,
     VocabularyModule,
     LanguagesModule,
+    StreaksModule,
   ],
   controllers: [QuizzesController, AttemptsController],
   providers: [QuizzesService, QuizScoringService],

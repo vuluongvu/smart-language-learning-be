@@ -12,6 +12,8 @@ import {
 } from '../common/dto/pagination-query.dto.js';
 import { assertResourceOwnership } from '../common/guards/ownership.guard.js';
 import { LanguagesService } from '../languages/languages.service.js';
+import { ActivitySourceType } from '../streaks/entities/learning-activity-event.entity.js';
+import { StreaksService } from '../streaks/streaks.service.js';
 import { TopicVocabulary } from '../topics/entities/topic-vocabulary.entity.js';
 import { Topic } from '../topics/entities/topic.entity.js';
 import { TopicsService } from '../topics/topics.service.js';
@@ -180,6 +182,7 @@ export class QuizzesService {
     private readonly vocabularyService: VocabularyService,
     private readonly languagesService: LanguagesService,
     private readonly scoringService: QuizScoringService,
+    private readonly streaksService: StreaksService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -836,10 +839,18 @@ export class QuizzesService {
       const answerRepo = manager.getRepository(QuizAnswer);
       const questionIds = validatedEntries.map((v) => v.question.id);
       if (questionIds.length > 0) {
-        await answerRepo.delete({
-          attemptId: attempt.id,
-          questionId: In(questionIds),
+        const existingDraftAnswers = await answerRepo.find({
+          where: {
+            attemptId: attempt.id,
+            questionId: In(questionIds),
+          },
+          select: { id: true },
         });
+        if (existingDraftAnswers.length > 0) {
+          await answerRepo.delete({
+            id: In(existingDraftAnswers.map((row) => row.id)),
+          });
+        }
 
         await answerRepo.save(
           validatedEntries.map(({ question, selectedOptionId, answerText }) =>
@@ -908,7 +919,15 @@ export class QuizzesService {
         dto.answers,
       );
 
-      await answerRepo.delete({ attemptId: attempt.id });
+      const existingAnswers = await answerRepo.find({
+        where: { attemptId: attempt.id },
+        select: { id: true },
+      });
+      if (existingAnswers.length > 0) {
+        await answerRepo.delete({
+          id: In(existingAnswers.map((row) => row.id)),
+        });
+      }
       await answerRepo.save(
         graded.answers.map((ans) =>
           answerRepo.create({
@@ -933,6 +952,13 @@ export class QuizzesService {
       attempt.completedAt = new Date();
       attempt.status = QuizAttemptStatus.COMPLETED;
       await attemptRepo.save(attempt);
+
+      await this.streaksService.recordQualifiedActivity(manager, {
+        userId,
+        sourceType: ActivitySourceType.QUIZ_ATTEMPT,
+        sourceId: attempt.id,
+        occurredAt: attempt.completedAt,
+      });
     });
 
     return this.getAttempt(userId, attemptId);

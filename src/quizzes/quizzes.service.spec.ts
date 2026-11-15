@@ -8,6 +8,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { vi } from 'vitest';
 import { LanguagesService } from '../languages/languages.service.js';
+import { StreaksService } from '../streaks/streaks.service.js';
 import { TopicVocabulary } from '../topics/entities/topic-vocabulary.entity.js';
 import { Topic } from '../topics/entities/topic.entity.js';
 import { TopicsService } from '../topics/topics.service.js';
@@ -98,6 +99,10 @@ describe('QuizzesService', () => {
         { provide: TopicsService, useValue: topicsService },
         { provide: VocabularyService, useValue: vocabularyService },
         { provide: LanguagesService, useValue: languagesService },
+        {
+          provide: StreaksService,
+          useValue: { recordQualifiedActivity: vi.fn() },
+        },
         { provide: DataSource, useValue: dataSource },
       ],
     }).compile();
