@@ -13,9 +13,12 @@ describe('UsersController', () => {
         {
           provide: UsersService,
           useValue: {
-            register: vi.fn(),
-            findOneUser: vi.fn(),
-            updateUser: vi.fn(),
+            getMyProfile: vi.fn(),
+            updateMyProfile: vi.fn(),
+            updateTimezone: vi.fn(),
+            updateLeaderboardVisibility: vi.fn(),
+            changePassword: vi.fn(),
+            deleteMyAccount: vi.fn(),
           },
         },
       ],
