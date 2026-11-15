@@ -13,8 +13,10 @@ RUN npm ci
 # 5. Copy source code vào container
 COPY . .
 
-# 6. Build TypeScript thành JavaScript
-RUN npm run build
+# 6. Build TypeScript thành JavaScript và cấp quyền cho non-root user
+RUN npm run build && chown -R node:node /app
+
+USER node
 
 # 7. Công bố port ứng dụng sử dụng
 EXPOSE 3000
