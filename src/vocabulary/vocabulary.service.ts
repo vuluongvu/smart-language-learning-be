@@ -7,6 +7,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { PaginationMeta } from '../common/dto/pagination-query.dto.js';
 import { assertResourceOwnership } from '../common/guards/ownership.guard.js';
+import {
+  ReviewRating,
+  VocabularyProgressStatus,
+} from '../flashcards/entities/flashcard.enums.js';
+import { VocabularyProgress } from '../flashcards/entities/vocabulary-progress.entity.js';
 import { LanguagesService } from '../languages/languages.service.js';
 import { TopicVocabulary } from '../topics/entities/topic-vocabulary.entity.js';
 import { TopicsService } from '../topics/topics.service.js';
@@ -26,6 +31,46 @@ export interface VocabularyTopicRef {
   name: string;
 }
 
+export interface VocabularyProgressSummary {
+  status: VocabularyProgressStatus;
+  repetitions: number;
+  intervalDays: number;
+  easeFactor: number;
+  lastRating: ReviewRating | null;
+  lastReviewedAt: Date | null;
+  nextReviewAt: Date | null;
+  isDue: boolean;
+}
+
+export function toVocabularyProgressSummary(
+  p: VocabularyProgress | null,
+  now = new Date(),
+): VocabularyProgressSummary {
+  if (!p) {
+    return {
+      status: VocabularyProgressStatus.NEW,
+      repetitions: 0,
+      intervalDays: 0,
+      easeFactor: 2.5,
+      lastRating: null,
+      lastReviewedAt: null,
+      nextReviewAt: null,
+      isDue: false,
+    };
+  }
+
+  return {
+    status: p.status,
+    repetitions: p.repetitions,
+    intervalDays: p.intervalDays,
+    easeFactor: Number(p.easeFactor),
+    lastRating: p.lastRating,
+    lastReviewedAt: p.lastReviewedAt,
+    nextReviewAt: p.nextReviewAt,
+    isDue: Boolean(p.nextReviewAt && p.nextReviewAt.getTime() <= now.getTime()),
+  };
+}
+
 export interface VocabularyItemView {
   id: number;
   languageId: number;
@@ -37,6 +82,7 @@ export interface VocabularyItemView {
   notes: string | null;
   source: VocabularySource;
   topics: VocabularyTopicRef[];
+  progress: VocabularyProgressSummary;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -53,6 +99,8 @@ export class VocabularyService {
     private readonly vocabularyRepository: Repository<VocabularyItem>,
     @InjectRepository(TopicVocabulary)
     private readonly topicVocabularyRepository: Repository<TopicVocabulary>,
+    @InjectRepository(VocabularyProgress)
+    private readonly progressRepository: Repository<VocabularyProgress>,
     private readonly languagesService: LanguagesService,
     private readonly topicsService: TopicsService,
     private readonly dataSource: DataSource,
@@ -98,16 +146,37 @@ export class VocabularyService {
       });
     }
 
-    // Phase 4 will attach vocabulary_progress status; until then, non-'new' statuses have 0 rows
-    if (
-      query.reviewStatus &&
-      query.reviewStatus !== 'all' &&
-      query.reviewStatus !== 'new'
-    ) {
-      return {
-        items: [],
-        meta: { page, limit, total: 0, totalPages: 1 },
-      };
+    if (query.reviewStatus && query.reviewStatus !== 'all') {
+      qb.leftJoin(
+        'vocabulary_progress',
+        'vp',
+        'vp.vocabulary_id = vocab.id AND vp.user_id = :progressUserId',
+        { progressUserId: userId },
+      );
+
+      switch (query.reviewStatus) {
+        case 'new':
+          qb.andWhere('(vp.id IS NULL OR vp.status = :newStatus)', {
+            newStatus: VocabularyProgressStatus.NEW,
+          });
+          break;
+        case 'learning':
+          qb.andWhere('vp.status = :learningStatus', {
+            learningStatus: VocabularyProgressStatus.LEARNING,
+          });
+          break;
+        case 'mastered':
+          qb.andWhere('vp.status = :masteredStatus', {
+            masteredStatus: VocabularyProgressStatus.MASTERED,
+          });
+          break;
+        case 'due':
+          qb.andWhere(
+            'vp.next_review_at IS NOT NULL AND vp.next_review_at <= :dueNow',
+            { dueNow: new Date() },
+          );
+          break;
+      }
     }
 
     const sortKey: VocabularySortKey = query.sortBy ?? 'newest';
@@ -130,11 +199,21 @@ export class VocabularyService {
     qb.skip((page - 1) * limit).take(limit);
 
     const [items, total] = await qb.getManyAndCount();
-    const topicsByVocab = await this.loadTopicsMap(items.map((i) => i.id));
+    const vocabIds = items.map((i) => i.id);
+    const [topicsByVocab, progressByVocab] = await Promise.all([
+      this.loadTopicsMap(vocabIds),
+      this.loadProgressMap(userId, vocabIds),
+    ]);
+    const now = new Date();
 
     return {
       items: items.map((item) =>
-        this.toView(item, topicsByVocab.get(item.id) ?? []),
+        this.toView(
+          item,
+          topicsByVocab.get(item.id) ?? [],
+          progressByVocab.get(item.id) ?? null,
+          now,
+        ),
       ),
       meta: {
         page,
@@ -179,8 +258,15 @@ export class VocabularyService {
 
   async findOne(userId: number, id: number): Promise<VocabularyItemView> {
     const item = await this.findOwnedItem(userId, id);
-    const topicsMap = await this.loadTopicsMap([item.id]);
-    return this.toView(item, topicsMap.get(item.id) ?? []);
+    const [topicsMap, progressMap] = await Promise.all([
+      this.loadTopicsMap([item.id]),
+      this.loadProgressMap(userId, [item.id]),
+    ]);
+    return this.toView(
+      item,
+      topicsMap.get(item.id) ?? [],
+      progressMap.get(item.id) ?? null,
+    );
   }
 
   async create(
@@ -248,6 +334,7 @@ export class VocabularyService {
       ...this.toView(
         saved,
         ownedTopics.map((t) => ({ id: t.id, name: t.name })),
+        null,
       ),
       duplicateWarning: existingDup.exists,
       existingMatchCount: existingDup.matches.length,
@@ -385,6 +472,26 @@ export class VocabularyService {
     return map;
   }
 
+  private async loadProgressMap(
+    userId: number,
+    vocabularyIds: number[],
+  ): Promise<Map<number, VocabularyProgress>> {
+    const map = new Map<number, VocabularyProgress>();
+    if (vocabularyIds.length === 0) {
+      return map;
+    }
+
+    const rows = await this.progressRepository.findBy({
+      userId,
+      vocabularyId: In(vocabularyIds),
+    });
+    for (const row of rows) {
+      map.set(row.vocabularyId, row);
+    }
+
+    return map;
+  }
+
   private normalizeOptional(value: string | null | undefined): string | null {
     if (value === null || value === undefined) {
       return null;
@@ -396,6 +503,8 @@ export class VocabularyService {
   private toView(
     item: VocabularyItem,
     topics: VocabularyTopicRef[],
+    progress: VocabularyProgress | null,
+    now = new Date(),
   ): VocabularyItemView {
     return {
       id: item.id,
@@ -408,6 +517,7 @@ export class VocabularyService {
       notes: item.notes,
       source: item.source,
       topics,
+      progress: toVocabularyProgressSummary(progress, now),
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
     };

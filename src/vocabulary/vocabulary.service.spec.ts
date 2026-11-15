@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { vi } from 'vitest';
+import { VocabularyProgress } from '../flashcards/entities/vocabulary-progress.entity.js';
 import { LanguagesService } from '../languages/languages.service.js';
 import { TopicVocabulary } from '../topics/entities/topic-vocabulary.entity.js';
 import { TopicsService } from '../topics/topics.service.js';
@@ -20,6 +21,7 @@ describe('VocabularyService', () => {
     createQueryBuilder: ReturnType<typeof vi.fn>;
   };
   let tvRepo: { find: ReturnType<typeof vi.fn> };
+  let progressRepo: { findBy: ReturnType<typeof vi.fn> };
   let topicsService: { findOwnedTopicsByIds: ReturnType<typeof vi.fn> };
   let languagesService: { findActiveByCode: ReturnType<typeof vi.fn> };
   let dataSource: { transaction: ReturnType<typeof vi.fn> };
@@ -40,6 +42,9 @@ describe('VocabularyService', () => {
     tvRepo = {
       find: vi.fn().mockResolvedValue([]),
     };
+    progressRepo = {
+      findBy: vi.fn().mockResolvedValue([]),
+    };
     topicsService = {
       findOwnedTopicsByIds: vi.fn().mockResolvedValue([]),
     };
@@ -57,6 +62,10 @@ describe('VocabularyService', () => {
         VocabularyService,
         { provide: getRepositoryToken(VocabularyItem), useValue: vocabRepo },
         { provide: getRepositoryToken(TopicVocabulary), useValue: tvRepo },
+        {
+          provide: getRepositoryToken(VocabularyProgress),
+          useValue: progressRepo,
+        },
         { provide: TopicsService, useValue: topicsService },
         { provide: LanguagesService, useValue: languagesService },
         { provide: DataSource, useValue: dataSource },
@@ -136,5 +145,57 @@ describe('VocabularyService', () => {
     vocabRepo.findOneBy.mockResolvedValue({ id: 5, userId: 88 });
     await expect(service.findOne(10, 5)).rejects.toThrow(ForbiddenException);
     await expect(service.remove(10, 5)).rejects.toThrow(ForbiddenException);
+  });
+
+  it('applies reviewStatus filter and attaches vocabulary progress summary on findAll', async () => {
+    const listQb = {
+      where: vi.fn().mockReturnThis(),
+      innerJoin: vi.fn().mockReturnThis(),
+      leftJoin: vi.fn().mockReturnThis(),
+      andWhere: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      addOrderBy: vi.fn().mockReturnThis(),
+      skip: vi.fn().mockReturnThis(),
+      take: vi.fn().mockReturnThis(),
+      getManyAndCount: vi.fn().mockResolvedValue([
+        [
+          {
+            id: 21,
+            userId: 10,
+            languageId: 1,
+            term: 'resilient',
+            pronunciation: null,
+            partOfSpeech: 'adjective',
+            definition: 'able to recover quickly',
+            example: null,
+            notes: null,
+            source: VocabularySource.MANUAL,
+            createdAt: new Date('2026-11-12T00:00:00Z'),
+            updatedAt: new Date('2026-11-12T00:00:00Z'),
+          },
+        ],
+        1,
+      ]),
+    };
+    vocabRepo.createQueryBuilder.mockReturnValue(listQb);
+    progressRepo.findBy.mockResolvedValue([
+      {
+        userId: 10,
+        vocabularyId: 21,
+        status: 'learning',
+        repetitions: 1,
+        intervalDays: 1,
+        easeFactor: '2.50',
+        lastRating: 'good',
+        lastReviewedAt: new Date('2026-11-14T00:00:00Z'),
+        nextReviewAt: new Date('2026-11-15T00:00:00Z'),
+      },
+    ]);
+
+    const res = await service.findAll(10, { reviewStatus: 'learning' });
+    expect(listQb.leftJoin).toHaveBeenCalled();
+    expect(listQb.andWhere).toHaveBeenCalled();
+    expect(res.items[0].progress.status).toBe('learning');
+    expect(res.items[0].progress.repetitions).toBe(1);
   });
 });
