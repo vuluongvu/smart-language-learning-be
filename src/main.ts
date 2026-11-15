@@ -36,8 +36,8 @@ async function bootstrap() {
 
   // setup swagger documentation at /api/docs
   const config = new DocumentBuilder()
-    .setTitle('My Backend API')
-    .setDescription('API documentation')
+    .setTitle('OpenQuiz API')
+    .setDescription('OpenQuiz English self-learning platform REST API')
     .setVersion('1.0')
     .addBearerAuth()
     .build();
