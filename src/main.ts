@@ -3,6 +3,7 @@ import { AppModule } from './app.module.js';
 import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { parseCorsOrigins } from './common/utils/cors.util.js';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -25,25 +26,30 @@ async function bootstrap() {
   // use helmet for security headers
   app.use(helmet());
 
-  // enable CORS
+  // enable CORS using strict allowlist parsing
   app.enableCors({
-    origin: process.env.CORS_ORIGIN || '*',
+    origin: parseCorsOrigins(process.env.CORS_ORIGIN, process.env.NODE_ENV),
     credentials: true,
   });
 
   // use global interceptor for class serialization
   app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
 
-  // setup swagger documentation at /api/docs
-  const config = new DocumentBuilder()
-    .setTitle('OpenQuiz API')
-    .setDescription('OpenQuiz English self-learning platform REST API')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
+  // setup swagger documentation at /api/docs outside production unless explicitly enabled
+  const enableSwagger =
+    process.env.NODE_ENV !== 'production' ||
+    process.env.ENABLE_SWAGGER === 'true';
+  if (enableSwagger) {
+    const config = new DocumentBuilder()
+      .setTitle('OpenQuiz API')
+      .setDescription('OpenQuiz English self-learning platform REST API')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
 
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document);
+  }
 
   // start the application
   await app.listen(process.env.PORT ?? 3000);
