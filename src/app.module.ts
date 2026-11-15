@@ -9,6 +9,7 @@ import { LanguagesModule } from './languages/languages.module.js';
 import { TopicsModule } from './topics/topics.module.js';
 import { VocabularyModule } from './vocabulary/vocabulary.module.js';
 import { QuizzesModule } from './quizzes/quizzes.module.js';
+import { FlashcardsModule } from './flashcards/flashcards.module.js';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor.js';
 import { AllExceptionsFilter } from './common/exception-filters/all-exceptions-filter.filter.js';
 import { RequestMiddleware } from './common/middleware/request-id.middleware.js';
@@ -82,6 +83,7 @@ import Joi from 'joi';
     TopicsModule,
     VocabularyModule,
     QuizzesModule,
+    FlashcardsModule,
   ],
   controllers: [AppController],
   providers: [
