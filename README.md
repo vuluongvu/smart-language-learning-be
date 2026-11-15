@@ -66,6 +66,16 @@ npm run start:dev
 | `npm run migration:revert` | Hoàn tác migration gần nhất |
 | `npm run migration:show` | Kiểm tra trạng thái migrations |
 
+## Cấu hình Google OAuth (AUTH-03)
+
+1. Tạo OAuth 2.0 Client ID (loại **Web application**) trong Google Cloud Console.
+2. Cấu hình **Authorized JavaScript origins**:
+   - Local development: `http://localhost:4200`
+3. Cấu hình **Authorized redirect URIs** (nếu dùng redirect flow / popup callback):
+   - Local development: `http://localhost:4200` và `http://localhost:4200/login`
+4. Điền `GOOGLE_CLIENT_ID` và `GOOGLE_CLIENT_SECRET` vào `.env` của backend (chỉ đặt `GOOGLE_CLIENT_ID` ở frontend `environment*.ts`, không bao giờ đặt `GOOGLE_CLIENT_SECRET` ở frontend).
+5. Backend xác minh Google ID token server-side qua `google-auth-library`. Nếu email đã tồn tại bằng tài khoản mật khẩu, người dùng phải đăng nhập bằng mật khẩu rồi liên kết Google qua `POST /api/v1/auth/google/link`.
+
 ## Ghi chú kiến trúc & MVP
 
 - **Database:** Sử dụng MySQL 8.4 (`number` auto-increment primary keys), lưu timestamp theo UTC (`timezone: 'Z'`), `synchronize` tắt mặc định (`DB_SYNCHRONIZE=false`) và bắt buộc tắt ở `production`.

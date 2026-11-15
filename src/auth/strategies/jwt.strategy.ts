@@ -1,31 +1,43 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
+import { UsersService } from '../../users/users.service.js';
 
 export interface JwtPayload {
-  // payload data type
   sub: number;
-  username: string;
+  email: string;
   role: string;
+  type?: string;
 }
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly usersService: UsersService,
+  ) {
     super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(), // extract token from header of Authorization
-      ignoreExpiration: false, // enable checking expriration
-      secretOrKey: config.getOrThrow<string>('JWT_SECRET'), // get secret key
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      ignoreExpiration: false,
+      secretOrKey: config.getOrThrow<string>('JWT_SECRET'),
     });
   }
 
-  // get data from token to use in application because payload has already done before calling this function
   async validate(payload: JwtPayload) {
+    if (payload.type && payload.type !== 'access') {
+      throw new UnauthorizedException('Invalid access token type');
+    }
+
+    const user = await this.usersService.findById(payload.sub);
+    if (!user) {
+      throw new UnauthorizedException('User account no longer exists');
+    }
+
     return {
-      userId: payload.sub,
-      username: payload.username,
-      role: payload.role,
+      userId: user.id,
+      email: user.email,
+      role: user.role,
     };
   }
 }

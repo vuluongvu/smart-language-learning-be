@@ -5,6 +5,7 @@ import { UsersModule } from './users/users.module.js';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module.js';
+import { LanguagesModule } from './languages/languages.module.js';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor.js';
 import { AllExceptionsFilter } from './common/exception-filters/all-exceptions-filter.filter.js';
 import { RequestMiddleware } from './common/middleware/request-id.middleware.js';
@@ -47,7 +48,7 @@ import Joi from 'joi';
     ThrottlerModule.forRoot([
       {
         ttl: 60_000,
-        limit: 3, // 10 requests per minute
+        limit: 60,
       },
     ]),
 
@@ -74,6 +75,7 @@ import Joi from 'joi';
     }),
     UsersModule,
     AuthModule,
+    LanguagesModule,
   ],
   controllers: [AppController],
   providers: [
