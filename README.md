@@ -119,3 +119,23 @@ Backend REST API for the **OpenQuiz** personalized English self-learning platfor
 - **Quizzes & Attempts**: `/api/v1/quizzes`, `/api/v1/quizzes/draft-from-vocabulary`, `/api/v1/quizzes/:id/attempts`, `/api/v1/attempts/:id/*` (MCQ, Word Meaning, Fill-in-the-Blank, immutable snapshots, save vocabulary from quiz)
 - **Flashcards & SM-2 SRS**: `/api/v1/flashcards/due`, `/api/v1/flashcard-sessions/*`
 - **Progress, Streaks & Leaderboard**: `/api/v1/progress/overview`, `/api/v1/progress/history`, `/api/v1/streaks/me`, `/api/v1/streaks/calendar`, `/api/v1/leaderboard/streaks`
+
+---
+
+## Running Backend + MySQL in Docker
+
+1. Ensure `.env` exists (copied from `.env.example` with strong `JWT_SECRET` / `JWT_REFRESH_SECRET` and DB credentials).
+2. Start MySQL and Backend together on the shared `openquiz-network` bridge:
+
+   ```bash
+   docker compose up -d --build
+   ```
+
+   - Automatically applies pending TypeORM migrations before starting `dist/main.js`.
+   - Backend API: `http://localhost:3001/api/v1` (Health: `http://localhost:3001/api/v1/health`)
+   - MySQL (`openquiz-mysql`): `127.0.0.1:3311`
+   - Optional (dev only): seed sample demo data inside the running container:
+
+     ```bash
+     docker compose exec app node dist/database/seed.js
+     ```
