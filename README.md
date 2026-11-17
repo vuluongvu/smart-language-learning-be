@@ -12,7 +12,7 @@ Backend REST API for the **OpenQuiz** personalized English self-learning platfor
 - **Authentication:** Email + Password (`bcrypt`), JWT access + rotating refresh sessions, server-verified Google OAuth (`google-auth-library`)
 - **Security & Validation:** `helmet`, `@nestjs/throttler` rate limiting, strict `ValidationPipe` (`whitelist`, `forbidNonWhitelisted`), ownership IDOR guards, configured CORS origin allowlist
 - **Testing & Quality:** Vitest (`unit` & `e2e`), Supertest, Oxlint, Prettier
-- **Zero Paid AI Policy:** `AI_PROVIDER=none` by default — core MVP runs offline/locally with deterministic quiz drafting and spaced repetition scheduling
+- **AI Tutor (Optional Groq):** `AI_PROVIDER=none` by default for zero-cost offline MVP; set `AI_PROVIDER=groq` and `GROQ_API_KEY` to enable chat with `qwen/qwen3.8-27b` (configurable via `GROQ_MODEL`)
 
 ---
 
@@ -43,7 +43,10 @@ Backend REST API for the **OpenQuiz** personalized English self-learning platfor
    - `CORS_ORIGIN`: Comma-separated allowed frontend origins (e.g. `http://localhost:4200`)
    - `JWT_SECRET`, `JWT_REFRESH_SECRET`: Strong random secrets (`>= 32` characters)
    - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`: Optional Google OAuth credentials
-   - `AI_PROVIDER`: Keep `none` for zero-cost MVP
+   - `AI_PROVIDER`: `none` (default, zero-cost offline MVP) or `groq`
+   - `GROQ_API_KEY`: Required when `AI_PROVIDER=groq` (free tier key from Groq Console)
+   - `GROQ_MODEL`: Optional Groq model override (default: `qwen/qwen3.8-27b`)
+   - `GROQ_BASE_URL`: Optional OpenAI-compatible base URL (default: `https://api.groq.com/openai/v1`)
    - `ENABLE_SWAGGER`: Optional (`true` enables `/api/docs` outside dev; dev enables Swagger automatically)
 
 3. **Start MySQL 8.4 via Docker Compose**
@@ -93,6 +96,24 @@ Backend REST API for the **OpenQuiz** personalized English self-learning platfor
 
 ---
 
+## AI Tutor Configuration (`Groq / qwen/qwen3.8-27b`)
+
+Core vocabulary, flashcard SM-2 scheduling, and quiz drafting work completely offline with `AI_PROVIDER=none`. To enable the optional AI English Tutor chat endpoints:
+
+1. Create a free API key at [Groq Console](https://console.groq.com/keys).
+2. Update `.env`:
+   ```env
+   AI_PROVIDER=groq
+   GROQ_API_KEY=gsk_...
+   GROQ_MODEL=qwen/qwen3.8-27b
+   ```
+3. Restart the backend server (or `docker compose up -d --build`). Note that startup validation requires a non-empty `GROQ_API_KEY` whenever `AI_PROVIDER=groq`.
+4. Available JWT-authenticated endpoints:
+   - `GET /api/v1/ai/status` — returns `{ enabled, model }`
+   - `POST /api/v1/ai/chat` — sends `{ message, history?, temperature? }` (rate-limited to 10 requests/minute per client; `history` up to 20 turns)
+
+---
+
 ## Scripts
 
 | Script | Description |
@@ -119,6 +140,7 @@ Backend REST API for the **OpenQuiz** personalized English self-learning platfor
 - **Quizzes & Attempts**: `/api/v1/quizzes`, `/api/v1/quizzes/draft-from-vocabulary`, `/api/v1/quizzes/:id/attempts`, `/api/v1/attempts/:id/*` (MCQ, Word Meaning, Fill-in-the-Blank, immutable snapshots, save vocabulary from quiz)
 - **Flashcards & SM-2 SRS**: `/api/v1/flashcards/due`, `/api/v1/flashcard-sessions/*`
 - **Progress, Streaks & Leaderboard**: `/api/v1/progress/overview`, `/api/v1/progress/history`, `/api/v1/streaks/me`, `/api/v1/streaks/calendar`, `/api/v1/leaderboard/streaks`
+- **AI Tutor (Optional Groq)**: `/api/v1/ai/status`, `/api/v1/ai/chat`
 
 ---
 
