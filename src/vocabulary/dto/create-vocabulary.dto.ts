@@ -55,4 +55,9 @@ export class CreateVocabularyDto {
   @IsInt({ each: true })
   @Min(1, { each: true })
   topicIds?: number[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  newTopicName?: string | null;
 }

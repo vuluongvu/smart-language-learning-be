@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 import { PaginationMeta } from '../common/dto/pagination-query.dto.js';
 import { assertResourceOwnership } from '../common/guards/ownership.guard.js';
 import { LanguagesService } from '../languages/languages.service.js';
@@ -265,6 +265,44 @@ export class TopicsService {
     }
 
     return topics;
+  }
+
+  async resolveOrCreateByNameWithinManager(
+    manager: EntityManager,
+    userId: number,
+    languageId: number,
+    rawName: string,
+  ): Promise<{ topic: Topic; created: boolean }> {
+    const trimmed = rawName.trim();
+    if (!trimmed) {
+      throw new BadRequestException('Topic name cannot be empty');
+    }
+
+    const topicRepo = manager.getRepository(Topic);
+    const existing = await topicRepo
+      .createQueryBuilder('topic')
+      .where('topic.userId = :userId', { userId })
+      .andWhere('topic.languageId = :languageId', { languageId })
+      .andWhere('LOWER(TRIM(topic.name)) = :normalized', {
+        normalized: trimmed.toLowerCase(),
+      })
+      .orderBy('topic.id', 'ASC')
+      .getOne();
+
+    if (existing) {
+      return { topic: existing, created: false };
+    }
+
+    const saved = await topicRepo.save(
+      topicRepo.create({
+        userId,
+        languageId,
+        name: trimmed.slice(0, 120),
+        description: null,
+      }),
+    );
+
+    return { topic: saved, created: true };
   }
 
   private async findOwnedTopic(

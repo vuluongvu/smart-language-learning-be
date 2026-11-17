@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { PaginationMeta } from '../common/dto/pagination-query.dto.js';
 import { assertResourceOwnership } from '../common/guards/ownership.guard.js';
 import {
@@ -13,8 +13,10 @@ import {
 } from '../flashcards/entities/flashcard.enums.js';
 import { VocabularyProgress } from '../flashcards/entities/vocabulary-progress.entity.js';
 import { LanguagesService } from '../languages/languages.service.js';
+import { Topic } from '../topics/entities/topic.entity.js';
 import { TopicVocabulary } from '../topics/entities/topic-vocabulary.entity.js';
 import { TopicsService } from '../topics/topics.service.js';
+import { BulkCreateVocabularyDto } from './dto/ai-vocabulary.dto.js';
 import { CreateVocabularyDto } from './dto/create-vocabulary.dto.js';
 import { UpdateVocabularyDto } from './dto/update-vocabulary.dto.js';
 import {
@@ -90,6 +92,23 @@ export interface VocabularyItemView {
 export interface CreateVocabularyResult extends VocabularyItemView {
   duplicateWarning: boolean;
   existingMatchCount: number;
+}
+
+export interface BulkCreateVocabularyResult {
+  createdCount: number;
+  createdTopic: VocabularyTopicRef | null;
+  items: CreateVocabularyResult[];
+}
+
+interface PreparedVocabularyDraft {
+  term: string;
+  pronunciation: string | null;
+  partOfSpeech: string | null;
+  definition: string;
+  example: string | null;
+  notes: string | null;
+  source: VocabularySource;
+  topicIds: number[];
 }
 
 @Injectable()
@@ -273,72 +292,190 @@ export class VocabularyService {
     userId: number,
     dto: CreateVocabularyDto,
   ): Promise<CreateVocabularyResult> {
-    const term = dto.term.trim();
-    const definition = dto.definition.trim();
-    if (!term) {
-      throw new BadRequestException('Term cannot be empty');
-    }
-    if (!definition) {
-      throw new BadRequestException('Definition cannot be empty');
-    }
-
-    const code = (dto.languageCode ?? 'en').trim().toLowerCase();
-    if (code !== 'en') {
-      throw new BadRequestException(
-        'MVP currently only supports English (en) vocabulary',
-      );
-    }
-
+    const prepared = this.prepareDraft(dto);
+    const newTopicName = this.normalizeOptional(dto.newTopicName);
     const language = await this.languagesService.findActiveByCode('en');
-    const uniqueTopicIds = Array.from(new Set(dto.topicIds ?? []));
     const ownedTopics = await this.topicsService.findOwnedTopicsByIds(
       userId,
-      uniqueTopicIds,
+      prepared.topicIds,
     );
 
-    const existingDup = await this.checkDuplicate(userId, term);
+    const existingDup = await this.checkDuplicate(userId, prepared.term);
 
-    const saved = await this.dataSource.transaction(async (manager) => {
-      const vocabRepo = manager.getRepository(VocabularyItem);
-      const tvRepo = manager.getRepository(TopicVocabulary);
-
-      const created = await vocabRepo.save(
-        vocabRepo.create({
+    const { saved, allTopics } = await this.dataSource.transaction(
+      async (manager) => {
+        const resolvedTopics = [...ownedTopics];
+        if (newTopicName) {
+          const { topic } =
+            await this.topicsService.resolveOrCreateByNameWithinManager(
+              manager,
+              userId,
+              language.id,
+              newTopicName,
+            );
+          if (!resolvedTopics.some((t) => t.id === topic.id)) {
+            resolvedTopics.push(topic);
+          }
+        }
+        const created = await this.insertWithinManager(
+          manager,
           userId,
-          languageId: language.id,
-          term,
-          pronunciation: this.normalizeOptional(dto.pronunciation),
-          partOfSpeech: this.normalizeOptional(dto.partOfSpeech),
-          definition,
-          example: this.normalizeOptional(dto.example),
-          notes: this.normalizeOptional(dto.notes),
-          source: dto.source ?? VocabularySource.MANUAL,
-        }),
-      );
-
-      if (ownedTopics.length > 0) {
-        await tvRepo.save(
-          ownedTopics.map((topic) =>
-            tvRepo.create({
-              topicId: topic.id,
-              vocabularyId: created.id,
-            }),
-          ),
+          language.id,
+          prepared,
+          resolvedTopics,
         );
-      }
-
-      return created;
-    });
+        return { saved: created, allTopics: resolvedTopics };
+      },
+    );
 
     return {
       ...this.toView(
         saved,
-        ownedTopics.map((t) => ({ id: t.id, name: t.name })),
+        allTopics.map((t) => ({ id: t.id, name: t.name })),
         null,
       ),
       duplicateWarning: existingDup.exists,
       existingMatchCount: existingDup.matches.length,
     };
+  }
+
+  async createBulk(
+    userId: number,
+    dto: BulkCreateVocabularyDto,
+  ): Promise<BulkCreateVocabularyResult> {
+    const sharedTopicIds = dto.topicIds ?? [];
+    const newTopicName = this.normalizeOptional(dto.newTopicName);
+    const preparedList = dto.items.map((item) =>
+      this.prepareDraft(item, sharedTopicIds),
+    );
+
+    const language = await this.languagesService.findActiveByCode('en');
+    const allTopicIds = Array.from(
+      new Set(preparedList.flatMap((item) => item.topicIds)),
+    );
+    const ownedTopics = await this.topicsService.findOwnedTopicsByIds(
+      userId,
+      allTopicIds,
+    );
+    const topicById = new Map(ownedTopics.map((topic) => [topic.id, topic]));
+
+    const existingTerms = await this.findExistingTermSet(
+      userId,
+      preparedList.map((item) => item.term),
+    );
+
+    const { savedRows, createdTopic } = await this.dataSource.transaction(
+      async (manager) => {
+        let extraTopic: Topic | null = null;
+        let createdTopicRef: VocabularyTopicRef | null = null;
+        if (newTopicName) {
+          const resolved =
+            await this.topicsService.resolveOrCreateByNameWithinManager(
+              manager,
+              userId,
+              language.id,
+              newTopicName,
+            );
+          extraTopic = resolved.topic;
+          topicById.set(extraTopic.id, extraTopic);
+          if (resolved.created) {
+            createdTopicRef = {
+              id: extraTopic.id,
+              name: extraTopic.name,
+            };
+          }
+        }
+
+        const results: Array<{ saved: VocabularyItem; topics: Topic[] }> = [];
+        for (const prepared of preparedList) {
+          const itemTopics = prepared.topicIds
+            .map((id) => topicById.get(id))
+            .filter((topic): topic is Topic => Boolean(topic));
+          if (extraTopic && !itemTopics.some((t) => t.id === extraTopic.id)) {
+            itemTopics.push(extraTopic);
+          }
+          const saved = await this.insertWithinManager(
+            manager,
+            userId,
+            language.id,
+            prepared,
+            itemTopics,
+          );
+          results.push({ saved, topics: itemTopics });
+        }
+        return { savedRows: results, createdTopic: createdTopicRef };
+      },
+    );
+
+    const seenInBatch = new Set<string>();
+    const items: CreateVocabularyResult[] = savedRows.map(
+      ({ saved, topics }) => {
+        const normalized = saved.term.trim().toLowerCase();
+        const isDup =
+          existingTerms.has(normalized) || seenInBatch.has(normalized);
+        seenInBatch.add(normalized);
+        return {
+          ...this.toView(
+            saved,
+            topics.map((t) => ({ id: t.id, name: t.name })),
+            null,
+          ),
+          duplicateWarning: isDup,
+          existingMatchCount: isDup ? 1 : 0,
+        };
+      },
+    );
+
+    return {
+      createdCount: items.length,
+      createdTopic,
+      items,
+    };
+  }
+
+  async findExistingTermSet(
+    userId: number,
+    terms: string[],
+  ): Promise<Set<string>> {
+    const normalized = Array.from(
+      new Set(terms.map((t) => t.trim().toLowerCase()).filter(Boolean)),
+    );
+    if (normalized.length === 0) {
+      return new Set();
+    }
+
+    const language = await this.languagesService.findActiveByCode('en');
+    const rows = await this.vocabularyRepository
+      .createQueryBuilder('vocab')
+      .select('LOWER(TRIM(vocab.term))', 'normalizedTerm')
+      .where('vocab.userId = :userId', { userId })
+      .andWhere('vocab.languageId = :languageId', { languageId: language.id })
+      .andWhere('LOWER(TRIM(vocab.term)) IN (:...normalized)', { normalized })
+      .getRawMany<{ normalizedTerm: string }>();
+
+    return new Set(rows.map((r) => r.normalizedTerm));
+  }
+
+  async listTopicTerms(
+    userId: number,
+    topicId: number,
+    limit = 30,
+  ): Promise<string[]> {
+    const rows = await this.vocabularyRepository
+      .createQueryBuilder('vocab')
+      .select('vocab.term', 'term')
+      .innerJoin(
+        'topic_vocabulary',
+        'tv',
+        'tv.vocabulary_id = vocab.id AND tv.topic_id = :topicId',
+        { topicId },
+      )
+      .where('vocab.userId = :userId', { userId })
+      .orderBy('vocab.createdAt', 'DESC')
+      .limit(limit)
+      .getRawMany<{ term: string }>();
+
+    return rows.map((r) => r.term);
   }
 
   async update(
@@ -490,6 +627,78 @@ export class VocabularyService {
     }
 
     return map;
+  }
+
+  private prepareDraft(
+    dto: CreateVocabularyDto,
+    extraTopicIds: number[] = [],
+  ): PreparedVocabularyDraft {
+    const term = dto.term.trim();
+    const definition = dto.definition.trim();
+    if (!term) {
+      throw new BadRequestException('Term cannot be empty');
+    }
+    if (!definition) {
+      throw new BadRequestException('Definition cannot be empty');
+    }
+
+    const code = (dto.languageCode ?? 'en').trim().toLowerCase();
+    if (code !== 'en') {
+      throw new BadRequestException(
+        'MVP currently only supports English (en) vocabulary',
+      );
+    }
+
+    return {
+      term,
+      pronunciation: this.normalizeOptional(dto.pronunciation),
+      partOfSpeech: this.normalizeOptional(dto.partOfSpeech),
+      definition,
+      example: this.normalizeOptional(dto.example),
+      notes: this.normalizeOptional(dto.notes),
+      source: dto.source ?? VocabularySource.MANUAL,
+      topicIds: Array.from(
+        new Set([...(dto.topicIds ?? []), ...extraTopicIds]),
+      ),
+    };
+  }
+
+  private async insertWithinManager(
+    manager: EntityManager,
+    userId: number,
+    languageId: number,
+    prepared: PreparedVocabularyDraft,
+    ownedTopics: Topic[],
+  ): Promise<VocabularyItem> {
+    const vocabRepo = manager.getRepository(VocabularyItem);
+    const tvRepo = manager.getRepository(TopicVocabulary);
+
+    const created = await vocabRepo.save(
+      vocabRepo.create({
+        userId,
+        languageId,
+        term: prepared.term,
+        pronunciation: prepared.pronunciation,
+        partOfSpeech: prepared.partOfSpeech,
+        definition: prepared.definition,
+        example: prepared.example,
+        notes: prepared.notes,
+        source: prepared.source,
+      }),
+    );
+
+    if (ownedTopics.length > 0) {
+      await tvRepo.save(
+        ownedTopics.map((topic) =>
+          tvRepo.create({
+            topicId: topic.id,
+            vocabularyId: created.id,
+          }),
+        ),
+      );
+    }
+
+    return created;
   }
 
   private normalizeOptional(value: string | null | undefined): string | null {
