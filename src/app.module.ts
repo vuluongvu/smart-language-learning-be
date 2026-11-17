@@ -13,6 +13,7 @@ import { FlashcardsModule } from './flashcards/flashcards.module.js';
 import { StreaksModule } from './streaks/streaks.module.js';
 import { ProgressModule } from './progress/progress.module.js';
 import { LeaderboardModule } from './leaderboard/leaderboard.module.js';
+import { AiModule } from './ai/ai.module.js';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor.js';
 import { AllExceptionsFilter } from './common/exception-filters/all-exceptions-filter.filter.js';
 import { RequestMiddleware } from './common/middleware/request-id.middleware.js';
@@ -47,8 +48,26 @@ import Joi from 'joi';
         JWT_REFRESH_EXPIRATION: Joi.string().default('7d'),
         GOOGLE_CLIENT_ID: Joi.string().allow('').optional(),
         GOOGLE_CLIENT_SECRET: Joi.string().allow('').optional(),
-        AI_PROVIDER: Joi.string().valid('none').default('none'),
+        AI_PROVIDER: Joi.string().valid('none', 'groq').default('none'),
+        GROQ_API_KEY: Joi.string().allow('').optional(),
+        GROQ_MODEL: Joi.string().default('qwen/qwen3.8-27b'),
+        GROQ_FALLBACK_MODELS: Joi.string()
+          .allow('')
+          .default('openai/gpt-oss-120b,openai/gpt-oss-20b'),
+        GROQ_BASE_URL: Joi.string()
+          .uri()
+          .default('https://api.groq.com/openai/v1'),
         ENABLE_SWAGGER: Joi.boolean().default(false),
+      }).custom((env: Record<string, unknown>, helpers) => {
+        if (
+          env.AI_PROVIDER === 'groq' &&
+          (typeof env.GROQ_API_KEY !== 'string' || !env.GROQ_API_KEY.trim())
+        ) {
+          return helpers.message({
+            custom: 'GROQ_API_KEY is required when AI_PROVIDER=groq',
+          });
+        }
+        return env;
       }),
     }),
 
@@ -91,6 +110,7 @@ import Joi from 'joi';
     StreaksModule,
     ProgressModule,
     LeaderboardModule,
+    AiModule,
   ],
   controllers: [AppController],
   providers: [
