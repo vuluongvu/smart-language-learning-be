@@ -10,17 +10,27 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
+import {
+  AiEnrichVocabularyDto,
+  AiGenerateVocabularyDto,
+  BulkCreateVocabularyDto,
+} from './dto/ai-vocabulary.dto.js';
 import { CreateVocabularyDto } from './dto/create-vocabulary.dto.js';
 import { UpdateVocabularyDto } from './dto/update-vocabulary.dto.js';
 import { VocabularyQueryDto } from './dto/vocabulary-query.dto.js';
+import { VocabularyAiService } from './vocabulary-ai.service.js';
 import { VocabularyService } from './vocabulary.service.js';
 
 @ApiTags('Vocabulary')
 @ApiBearerAuth()
 @Controller('vocabulary')
 export class VocabularyController {
-  constructor(private readonly vocabularyService: VocabularyService) {}
+  constructor(
+    private readonly vocabularyService: VocabularyService,
+    private readonly vocabularyAiService: VocabularyAiService,
+  ) {}
 
   @Get()
   @ApiOperation({
@@ -51,6 +61,41 @@ export class VocabularyController {
     @Body() dto: CreateVocabularyDto,
   ) {
     return this.vocabularyService.create(userId, dto);
+  }
+
+  @Post('bulk')
+  @ApiOperation({ summary: 'Create multiple vocabulary items in one batch' })
+  createBulk(
+    @CurrentUser('userId') userId: number,
+    @Body() dto: BulkCreateVocabularyDto,
+  ) {
+    return this.vocabularyService.createBulk(userId, dto);
+  }
+
+  @Post('ai/enrich')
+  @Throttle({ default: { limit: 15, ttl: 60_000 } })
+  @ApiOperation({
+    summary:
+      'Auto-fill pronunciation, POS, Vietnamese definition, and example for a term via AI',
+  })
+  enrichWithAi(
+    @CurrentUser('userId') userId: number,
+    @Body() dto: AiEnrichVocabularyDto,
+  ) {
+    return this.vocabularyAiService.enrichTerm(userId, dto);
+  }
+
+  @Post('ai/generate')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({
+    summary:
+      'Generate draft vocabulary cards from a topic prompt or English passage via AI',
+  })
+  generateWithAi(
+    @CurrentUser('userId') userId: number,
+    @Body() dto: AiGenerateVocabularyDto,
+  ) {
+    return this.vocabularyAiService.generateBatch(userId, dto);
   }
 
   @Get(':id')

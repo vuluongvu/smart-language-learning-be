@@ -22,7 +22,10 @@ describe('VocabularyService', () => {
   };
   let tvRepo: { find: ReturnType<typeof vi.fn> };
   let progressRepo: { findBy: ReturnType<typeof vi.fn> };
-  let topicsService: { findOwnedTopicsByIds: ReturnType<typeof vi.fn> };
+  let topicsService: {
+    findOwnedTopicsByIds: ReturnType<typeof vi.fn>;
+    resolveOrCreateByNameWithinManager: ReturnType<typeof vi.fn>;
+  };
   let languagesService: { findActiveByCode: ReturnType<typeof vi.fn> };
   let dataSource: { transaction: ReturnType<typeof vi.fn> };
 
@@ -47,6 +50,7 @@ describe('VocabularyService', () => {
     };
     topicsService = {
       findOwnedTopicsByIds: vi.fn().mockResolvedValue([]),
+      resolveOrCreateByNameWithinManager: vi.fn(),
     };
     languagesService = {
       findActiveByCode: vi
@@ -197,5 +201,115 @@ describe('VocabularyService', () => {
     expect(listQb.andWhere).toHaveBeenCalled();
     expect(res.items[0].progress.status).toBe('learning');
     expect(res.items[0].progress.repetitions).toBe(1);
+  });
+
+  it('creates bulk AI vocabulary items in a single transaction with duplicate warnings', async () => {
+    const rawQb = {
+      select: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      andWhere: vi.fn().mockReturnThis(),
+      getRawMany: vi
+        .fn()
+        .mockResolvedValue([{ normalizedTerm: 'sustainable' }]),
+    };
+    vocabRepo.createQueryBuilder.mockReturnValue(rawQb);
+    topicsService.findOwnedTopicsByIds.mockResolvedValue([
+      { id: 4, name: 'Environment' },
+    ]);
+
+    let seq = 100;
+    const txVocabRepo = {
+      create: vi.fn((x) => ({
+        id: seq++,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...x,
+      })),
+      save: vi.fn(async (x) => x),
+    };
+    const txTvRepo = {
+      create: vi.fn((x) => x),
+      save: vi.fn(async (x) => x),
+    };
+    dataSource.transaction.mockImplementation(async (cb) =>
+      cb({
+        getRepository: (entity: unknown) =>
+          entity === VocabularyItem ? txVocabRepo : txTvRepo,
+      }),
+    );
+
+    const res = await service.createBulk(10, {
+      topicIds: [4],
+      items: [
+        {
+          term: 'sustainable',
+          definition: 'Bền vững',
+          source: VocabularySource.AI,
+        },
+        {
+          term: 'mitigate',
+          definition: 'Giảm nhẹ',
+          source: VocabularySource.AI,
+        },
+      ],
+    });
+
+    expect(res.createdCount).toBe(2);
+    expect(res.createdTopic).toBeNull();
+    expect(res.items[0].source).toBe(VocabularySource.AI);
+    expect(res.items[0].duplicateWarning).toBe(true);
+    expect(res.items[0].topics).toEqual([{ id: 4, name: 'Environment' }]);
+    expect(res.items[1].duplicateWarning).toBe(false);
+  });
+
+  it('resolves or creates newTopicName during bulk AI vocabulary creation', async () => {
+    const rawQb = {
+      select: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      andWhere: vi.fn().mockReturnThis(),
+      getRawMany: vi.fn().mockResolvedValue([]),
+    };
+    vocabRepo.createQueryBuilder.mockReturnValue(rawQb);
+    topicsService.resolveOrCreateByNameWithinManager.mockResolvedValue({
+      topic: { id: 9, name: 'Công nghệ' },
+      created: true,
+    });
+
+    const txVocabRepo = {
+      create: vi.fn((x) => ({
+        id: 200,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...x,
+      })),
+      save: vi.fn(async (x) => x),
+    };
+    const txTvRepo = {
+      create: vi.fn((x) => x),
+      save: vi.fn(async (x) => x),
+    };
+    dataSource.transaction.mockImplementation(async (cb) =>
+      cb({
+        getRepository: (entity: unknown) =>
+          entity === VocabularyItem ? txVocabRepo : txTvRepo,
+      }),
+    );
+
+    const res = await service.createBulk(10, {
+      newTopicName: 'Công nghệ',
+      items: [
+        {
+          term: 'algorithm',
+          definition: 'Thuật toán',
+          source: VocabularySource.AI,
+        },
+      ],
+    });
+
+    expect(
+      topicsService.resolveOrCreateByNameWithinManager,
+    ).toHaveBeenCalledWith(expect.anything(), 10, 1, 'Công nghệ');
+    expect(res.createdTopic).toEqual({ id: 9, name: 'Công nghệ' });
+    expect(res.items[0].topics).toEqual([{ id: 9, name: 'Công nghệ' }]);
   });
 });
