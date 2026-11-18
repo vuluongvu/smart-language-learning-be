@@ -1,11 +1,16 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 
 @Entity({ name: 'learning_path_tracks' })
 export class LearningPathTrack {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column({ type: 'varchar', length: 32, unique: true })
+  @Column({ type: 'varchar', length: 48, unique: true })
   code: string;
 
   @Column({ type: 'varchar', length: 80 })
@@ -20,6 +25,18 @@ export class LearningPathTrack {
   @Column({ type: 'text' })
   summary: string;
 
+  @Column({ name: 'owner_user_id', type: 'int', nullable: true })
+  ownerUserId: number | null;
+
+  @Column({ name: 'is_ai_generated', type: 'boolean', default: false })
+  isAiGenerated: boolean;
+
+  @Column({ name: 'source_prompt', type: 'text', nullable: true })
+  sourcePrompt: string | null;
+
   @Column({ name: 'sort_order', type: 'int', default: 0 })
   sortOrder: number;
+
+  @CreateDateColumn({ name: 'created_at' })
+  createdAt: Date;
 }

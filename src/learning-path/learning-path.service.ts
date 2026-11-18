@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, In, IsNull, Repository } from 'typeorm';
 import {
   AiConversationService,
   AiConversationSessionDetailView,
@@ -23,7 +23,10 @@ import {
 import { VocabularyService } from '../vocabulary/vocabulary.service.js';
 import {
   EvaluateUnitWritingDto,
+  GenerateAiLearningPathDto,
+  GenerateUnitStudyGuideDto,
   LEARNING_GOAL_BANDS,
+  RegenerateAiUnitDto,
   SaveUnitWordsDto,
   StartUnitSpeakingDto,
   SubmitUnitQuizDto,
@@ -34,6 +37,7 @@ import { LearningPathTrack } from './entities/learning-path-track.entity.js';
 import {
   LearningPathUnit,
   UnitReadingListening,
+  UnitStudyGuide,
   UnitVocabWord,
   UnitWritingPrompt,
 } from './entities/learning-path-unit.entity.js';
@@ -43,6 +47,7 @@ import {
   UnitWritingSuggestedWord,
   UserUnitProgress,
 } from './entities/user-unit-progress.entity.js';
+import { LearningPathAiService } from './learning-path-ai.service.js';
 import { LearningPathCatalogService } from './learning-path-catalog.service.js';
 
 export type UnitNodeStatus = 'completed' | 'active' | 'locked';
@@ -93,6 +98,8 @@ export interface LearningPathTrackSummary {
   cefrLevel: string;
   languageCode: string;
   summary: string;
+  isAiGenerated: boolean;
+  sourcePrompt: string | null;
 }
 
 export interface LearningPathOverview {
@@ -135,6 +142,8 @@ export interface LearningPathUnitDetailView {
   readingListening: UnitReadingListening;
   writing: UnitWritingPrompt;
   speakingTopicPrompt: string;
+  isCustomAiTrack: boolean;
+  studyGuide: UnitStudyGuide | null;
   progress: UnitProgressView;
 }
 
@@ -184,6 +193,7 @@ export class LearningPathService {
     private readonly languagesService: LanguagesService,
     private readonly aiService: AiService,
     private readonly aiConversationService: AiConversationService,
+    private readonly learningPathAiService: LearningPathAiService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -198,7 +208,10 @@ export class LearningPathService {
       throw new NotFoundException('User not found');
     }
 
-    const tracks = await this.trackRepo.find({ order: { sortOrder: 'ASC' } });
+    const tracks = await this.trackRepo.find({
+      where: [{ ownerUserId: IsNull() }, { ownerUserId: userId }],
+      order: { isAiGenerated: 'ASC', sortOrder: 'ASC', id: 'ASC' },
+    });
     if (tracks.length === 0) {
       throw new NotFoundException('Learning path catalog is empty');
     }
@@ -342,7 +355,7 @@ export class LearningPathService {
     userId: number,
     unitId: number,
   ): Promise<LearningPathUnitDetailView> {
-    const { unit, part, track } = await this.loadUnitContext(unitId);
+    const { unit, part, track } = await this.loadUnitContext(unitId, userId);
     const progress = await this.progressRepo.findOneBy({ userId, unitId });
 
     const existingTerms = await this.vocabularyService.findExistingTermSet(
@@ -373,6 +386,8 @@ export class LearningPathService {
       readingListening: unit.readingPassageJson,
       writing: unit.writingPromptJson,
       speakingTopicPrompt: unit.speakingTopicPrompt,
+      isCustomAiTrack: track.isAiGenerated && track.ownerUserId === userId,
+      studyGuide: progress?.aiStudyGuideJson ?? unit.studyGuideJson ?? null,
       progress: this.toProgressView(progress),
     };
   }
@@ -388,7 +403,7 @@ export class LearningPathService {
     totalUnitWords: number;
     progress: UnitProgressView;
   }> {
-    const { unit } = await this.loadUnitContext(unitId);
+    const { unit } = await this.loadUnitContext(unitId, userId);
     const progress = await this.getOrCreateProgress(userId, unitId);
     const topic = await this.resolveUnitTopic(userId, unit, progress);
 
@@ -479,7 +494,7 @@ export class LearningPathService {
     unitId: number,
     dto: SubmitUnitQuizDto,
   ): Promise<UnitQuizSubmissionResult> {
-    const { unit } = await this.loadUnitContext(unitId);
+    const { unit } = await this.loadUnitContext(unitId, userId);
     const questions = unit.readingPassageJson.questions;
     const answerByQuestionId = new Map(
       dto.answers.map((a) => [a.questionId, a.selectedIndex]),
@@ -532,7 +547,7 @@ export class LearningPathService {
       );
     }
 
-    const { unit, track } = await this.loadUnitContext(unitId);
+    const { unit, track } = await this.loadUnitContext(unitId, userId);
     const explainLangName =
       dto.explanationLang === 'en' ? 'English' : 'Vietnamese';
 
@@ -603,7 +618,7 @@ export class LearningPathService {
     session: AiConversationSessionDetailView;
     progress: UnitProgressView;
   }> {
-    const { unit, track } = await this.loadUnitContext(unitId);
+    const { unit, track } = await this.loadUnitContext(unitId, userId);
     const progress = await this.getOrCreateProgress(userId, unitId);
 
     if (progress.speakingSessionId) {
@@ -648,7 +663,7 @@ export class LearningPathService {
     userId: number,
     unitId: number,
   ): Promise<{ progress: UnitProgressView }> {
-    await this.loadUnitContext(unitId);
+    await this.loadUnitContext(unitId, userId);
     const progress = await this.getOrCreateProgress(userId, unitId);
     progress.speakingCompleted = true;
     this.updateCompletedTimestamp(progress);
@@ -669,7 +684,7 @@ export class LearningPathService {
     addedCount: number;
     skippedCount: number;
   }> {
-    const { unit } = await this.loadUnitContext(unitId);
+    const { unit } = await this.loadUnitContext(unitId, userId);
     const progress = await this.getOrCreateProgress(userId, unitId);
     const topic = await this.resolveUnitTopic(userId, unit, progress);
 
@@ -713,7 +728,212 @@ export class LearningPathService {
     };
   }
 
-  private async loadUnitContext(unitId: number): Promise<{
+  async generateAiLearningPath(
+    userId: number,
+    dto: GenerateAiLearningPathDto,
+  ): Promise<LearningPathOverview> {
+    const goalTopic = dto.goalTopic.trim();
+    if (goalTopic.length < 3) {
+      throw new BadRequestException(
+        'Please describe your learning goal or topic clearly.',
+      );
+    }
+
+    const user = await this.userRepo.findOneBy({ id: userId });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const targetBand = dto.targetBand ?? user.learningGoalBand ?? 'band_45_55';
+    const currentLevel = dto.currentLevel ?? user.currentLevel ?? 'B1';
+    const unitCount = dto.unitCount ?? 3;
+    const lang = dto.explanationLang ?? 'vi';
+
+    const outline = await this.learningPathAiService.generatePathOutline({
+      goalTopic,
+      sourceMaterial: dto.sourceMaterial,
+      targetBand,
+      currentLevel,
+      unitCount,
+      explanationLang: lang,
+    });
+
+    const generatedPacks: Array<{
+      outline: (typeof outline.units)[number];
+      pack: Awaited<ReturnType<LearningPathAiService['generateUnitStudyPack']>>;
+    }> = [];
+    const avoidTerms: string[] = [];
+
+    for (const unitOutline of outline.units) {
+      const pack = await this.learningPathAiService.generateUnitStudyPack({
+        goalTopic,
+        unit: unitOutline,
+        targetBand,
+        sourceMaterial: dto.sourceMaterial,
+        avoidTerms,
+        explanationLang: lang,
+      });
+      avoidTerms.push(...pack.vocabulary.map((w) => w.term));
+      generatedPacks.push({ outline: unitOutline, pack });
+    }
+
+    const uniqueSuffix = `${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
+    const trackCode = `ai-${userId}-${uniqueSuffix}`.slice(0, 46);
+
+    const createdTrack = await this.dataSource.transaction(async (manager) => {
+      const tRepo = manager.getRepository(LearningPathTrack);
+      const pRepo = manager.getRepository(LearningPathPart);
+      const uRepo = manager.getRepository(LearningPathUnit);
+
+      const track = await tRepo.save(
+        tRepo.create({
+          code: trackCode,
+          title: outline.trackTitle,
+          cefrLevel: outline.cefrLevel,
+          languageCode: 'en',
+          summary: outline.trackSummary,
+          ownerUserId: userId,
+          isAiGenerated: true,
+          sourcePrompt: goalTopic,
+          sortOrder: 100,
+        }),
+      );
+
+      const part = await pRepo.save(
+        pRepo.create({
+          trackId: track.id,
+          partNumber: 1,
+          title: outline.partTitle,
+          subtitle: outline.partSubtitle,
+          sortOrder: 1,
+        }),
+      );
+
+      for (let i = 0; i < generatedPacks.length; i += 1) {
+        const { outline: uOut, pack } = generatedPacks[i];
+        await uRepo.save(
+          uRepo.create({
+            partId: part.id,
+            unitNumber: uOut.unitNumber,
+            slug: `${trackCode}-u${uOut.unitNumber}`.slice(0, 78),
+            title: uOut.title,
+            topicName: uOut.topicName,
+            icon: uOut.icon,
+            themeColor: uOut.themeColor,
+            grammarFocus: uOut.grammarFocus,
+            vocabularyJson: pack.vocabulary,
+            readingPassageJson: pack.readingListening,
+            writingPromptJson: pack.writing,
+            speakingTopicPrompt: uOut.speakingTopicPrompt,
+            studyGuideJson: pack.studyGuide,
+            sortOrder: i + 1,
+          }),
+        );
+      }
+
+      return track;
+    });
+
+    return this.getOverview(userId, createdTrack.code);
+  }
+
+  async deleteAiTrack(
+    userId: number,
+    trackId: number,
+  ): Promise<LearningPathOverview> {
+    const track = await this.trackRepo.findOneBy({ id: trackId });
+    if (
+      !track ||
+      (track.ownerUserId !== null && track.ownerUserId !== userId)
+    ) {
+      throw new NotFoundException('Custom AI learning path not found');
+    }
+    if (!track.isAiGenerated || track.ownerUserId !== userId) {
+      throw new BadRequestException('Curated learning paths cannot be deleted');
+    }
+
+    await this.trackRepo.remove(track);
+    return this.getOverview(userId);
+  }
+
+  async generateUnitStudyGuide(
+    userId: number,
+    unitId: number,
+    dto: GenerateUnitStudyGuideDto,
+  ): Promise<{ studyGuide: UnitStudyGuide }> {
+    const { unit, track } = await this.loadUnitContext(unitId, userId);
+    const studyGuide = await this.learningPathAiService.generateStudyGuideOnly({
+      unitTitle: unit.title,
+      grammarFocus: unit.grammarFocus,
+      targetTerms: unit.vocabularyJson.map((w) => w.term),
+      bandLabel: track.title,
+      cefrLevel: track.cefrLevel,
+      focusNote: dto.focusNote,
+      explanationLang: dto.explanationLang ?? 'vi',
+    });
+
+    const progress = await this.getOrCreateProgress(userId, unitId);
+    progress.aiStudyGuideJson = studyGuide;
+    await this.progressRepo.save(progress);
+
+    return { studyGuide };
+  }
+
+  async regenerateAiUnitMaterials(
+    userId: number,
+    unitId: number,
+    dto: RegenerateAiUnitDto,
+  ): Promise<LearningPathUnitDetailView> {
+    const { unit, track } = await this.loadUnitContext(unitId, userId);
+    if (!track.isAiGenerated || track.ownerUserId !== userId) {
+      throw new BadRequestException(
+        'Only AI-generated custom units can regenerate full materials',
+      );
+    }
+
+    const lang = dto.explanationLang ?? 'vi';
+    const matchingBandCode =
+      LEARNING_GOAL_BANDS.find(
+        (b) =>
+          this.learningPathAiService.resolveBandMetadata(b).targetCefr ===
+          track.cefrLevel,
+      ) ?? 'band_45_55';
+
+    const pack = await this.learningPathAiService.generateUnitStudyPack({
+      goalTopic: track.sourcePrompt || track.title,
+      unit: {
+        unitNumber: unit.unitNumber,
+        title: unit.title,
+        topicName: unit.topicName,
+        grammarFocus: unit.grammarFocus,
+        icon: unit.icon,
+        themeColor: unit.themeColor,
+        speakingTopicPrompt: unit.speakingTopicPrompt,
+      },
+      targetBand: matchingBandCode,
+      sourceMaterial: dto.focusNote,
+      explanationLang: lang,
+    });
+
+    unit.vocabularyJson = pack.vocabulary;
+    unit.readingPassageJson = pack.readingListening;
+    unit.writingPromptJson = pack.writing;
+    unit.studyGuideJson = pack.studyGuide;
+    await this.unitRepo.save(unit);
+
+    const progress = await this.progressRepo.findOneBy({ userId, unitId });
+    if (progress && progress.aiStudyGuideJson) {
+      progress.aiStudyGuideJson = null;
+      await this.progressRepo.save(progress);
+    }
+
+    return this.getUnitDetail(userId, unitId);
+  }
+
+  private async loadUnitContext(
+    unitId: number,
+    userId: number,
+  ): Promise<{
     unit: LearningPathUnit;
     part: LearningPathPart;
     track: LearningPathTrack;
@@ -731,7 +951,10 @@ export class LearningPathService {
     }
 
     const track = await this.trackRepo.findOneBy({ id: part.trackId });
-    if (!track) {
+    if (
+      !track ||
+      (track.ownerUserId !== null && track.ownerUserId !== userId)
+    ) {
       throw new NotFoundException('Learning track not found');
     }
 
@@ -759,6 +982,7 @@ export class LearningPathService {
         speakingCompleted: false,
         speakingSessionId: null,
         topicId: null,
+        aiStudyGuideJson: null,
         completedAt: null,
       }),
     );
@@ -910,6 +1134,8 @@ export class LearningPathService {
       cefrLevel: track.cefrLevel,
       languageCode: track.languageCode,
       summary: track.summary,
+      isAiGenerated: Boolean(track.isAiGenerated),
+      sourcePrompt: track.sourcePrompt ?? null,
     };
   }
 
