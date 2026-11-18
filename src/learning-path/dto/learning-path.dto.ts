@@ -130,11 +130,11 @@ export class GenerateAiLearningPathDto {
   @MaxLength(220)
   goalTopic: string;
 
-  @ApiPropertyOptional({ maxLength: 4000 })
+  @ApiPropertyOptional({ maxLength: 300 })
   @IsOptional()
   @IsString()
-  @MaxLength(4000)
-  sourceMaterial?: string;
+  @MaxLength(300)
+  learningFocus?: string;
 
   @ApiPropertyOptional({ enum: LEARNING_GOAL_BANDS })
   @IsOptional()
@@ -161,11 +161,11 @@ export class GenerateAiLearningPathDto {
 }
 
 export class GenerateUnitStudyGuideDto {
-  @ApiPropertyOptional({ maxLength: 1500 })
+  @ApiPropertyOptional({ maxLength: 300 })
   @IsOptional()
   @IsString()
-  @MaxLength(1500)
-  focusNote?: string;
+  @MaxLength(300)
+  focusGoal?: string;
 
   @ApiPropertyOptional({ enum: ['vi', 'en'], default: 'vi' })
   @IsOptional()
@@ -174,11 +174,11 @@ export class GenerateUnitStudyGuideDto {
 }
 
 export class RegenerateAiUnitDto {
-  @ApiPropertyOptional({ maxLength: 1500 })
+  @ApiPropertyOptional({ maxLength: 300 })
   @IsOptional()
   @IsString()
-  @MaxLength(1500)
-  focusNote?: string;
+  @MaxLength(300)
+  focusGoal?: string;
 
   @ApiPropertyOptional({ enum: ['vi', 'en'], default: 'vi' })
   @IsOptional()

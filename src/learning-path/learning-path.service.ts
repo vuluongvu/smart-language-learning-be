@@ -751,7 +751,7 @@ export class LearningPathService {
 
     const outline = await this.learningPathAiService.generatePathOutline({
       goalTopic,
-      sourceMaterial: dto.sourceMaterial,
+      learningFocus: dto.learningFocus,
       targetBand,
       currentLevel,
       unitCount,
@@ -769,7 +769,7 @@ export class LearningPathService {
         goalTopic,
         unit: unitOutline,
         targetBand,
-        sourceMaterial: dto.sourceMaterial,
+        learningFocus: dto.learningFocus,
         avoidTerms,
         explanationLang: lang,
       });
@@ -779,6 +779,9 @@ export class LearningPathService {
 
     const uniqueSuffix = `${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
     const trackCode = `ai-${userId}-${uniqueSuffix}`.slice(0, 46);
+    const savedPrompt = dto.learningFocus?.trim()
+      ? `${goalTopic} (${dto.learningFocus.trim()})`
+      : goalTopic;
 
     const createdTrack = await this.dataSource.transaction(async (manager) => {
       const tRepo = manager.getRepository(LearningPathTrack);
@@ -794,7 +797,7 @@ export class LearningPathService {
           summary: outline.trackSummary,
           ownerUserId: userId,
           isAiGenerated: true,
-          sourcePrompt: goalTopic,
+          sourcePrompt: savedPrompt,
           sortOrder: 100,
         }),
       );
@@ -868,7 +871,7 @@ export class LearningPathService {
       targetTerms: unit.vocabularyJson.map((w) => w.term),
       bandLabel: track.title,
       cefrLevel: track.cefrLevel,
-      focusNote: dto.focusNote,
+      focusGoal: dto.focusGoal,
       explanationLang: dto.explanationLang ?? 'vi',
     });
 
@@ -911,7 +914,7 @@ export class LearningPathService {
         speakingTopicPrompt: unit.speakingTopicPrompt,
       },
       targetBand: matchingBandCode,
-      sourceMaterial: dto.focusNote,
+      learningFocus: dto.focusGoal,
       explanationLang: lang,
     });
 
