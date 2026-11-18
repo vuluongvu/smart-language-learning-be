@@ -22,8 +22,11 @@ export interface UserProfileView {
   avatarUrl: string | null;
   timezone: string;
   isLeaderboardVisible: boolean;
+  learningLanguage?: string;
   learningGoalBand?: string;
   currentLevel?: string;
+  koreanGoalBand?: string;
+  koreanCurrentLevel?: string;
   dailyGoalMinutes?: number;
   role: string;
   hasPassword: boolean;
@@ -107,8 +110,11 @@ export class UsersService {
       avatarUrl: user.avatarUrl,
       timezone: user.timezone,
       isLeaderboardVisible: user.isLeaderboardVisible,
+      learningLanguage: user.learningLanguage ?? 'en',
       learningGoalBand: user.learningGoalBand ?? 'band_45_55',
       currentLevel: user.currentLevel ?? 'B1',
+      koreanGoalBand: user.koreanGoalBand ?? 'topik_1_2',
+      koreanCurrentLevel: user.koreanCurrentLevel ?? 'A1',
       dailyGoalMinutes: user.dailyGoalMinutes ?? 15,
       role: user.role,
       hasPassword: Boolean(user.passwordHash),
@@ -145,6 +151,10 @@ export class UsersService {
 
     if (dto.isLeaderboardVisible !== undefined) {
       user.isLeaderboardVisible = dto.isLeaderboardVisible;
+    }
+
+    if (dto.learningLanguage !== undefined) {
+      user.learningLanguage = dto.learningLanguage;
     }
 
     await this.userRepository.save(user);

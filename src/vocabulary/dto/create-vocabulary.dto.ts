@@ -1,6 +1,7 @@
 import {
   IsArray,
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -8,6 +9,10 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import {
+  type LearningLanguageCode,
+  SUPPORTED_LEARNING_LANGUAGES,
+} from '../../common/constants/learning-languages.js';
 import { VocabularySource } from '../entities/vocabulary-item.entity.js';
 
 export class CreateVocabularyDto {
@@ -42,9 +47,8 @@ export class CreateVocabularyDto {
   notes?: string | null;
 
   @IsOptional()
-  @IsString()
-  @MaxLength(16)
-  languageCode?: string;
+  @IsIn(SUPPORTED_LEARNING_LANGUAGES)
+  languageCode?: LearningLanguageCode | string;
 
   @IsOptional()
   @IsEnum(VocabularySource)

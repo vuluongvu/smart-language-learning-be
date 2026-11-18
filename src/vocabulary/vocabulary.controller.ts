@@ -28,7 +28,10 @@ import {
 } from './dto/ai-vocabulary.dto.js';
 import { CreateVocabularyDto } from './dto/create-vocabulary.dto.js';
 import { UpdateVocabularyDto } from './dto/update-vocabulary.dto.js';
-import { VocabularyQueryDto } from './dto/vocabulary-query.dto.js';
+import {
+  CheckDuplicateQueryDto,
+  VocabularyQueryDto,
+} from './dto/vocabulary-query.dto.js';
 import {
   MAX_VOCAB_IMAGE_BYTES,
   type UploadedImageInput,
@@ -62,9 +65,13 @@ export class VocabularyController {
   })
   checkDuplicate(
     @CurrentUser('userId') userId: number,
-    @Query('term') term = '',
+    @Query() query: CheckDuplicateQueryDto,
   ) {
-    return this.vocabularyService.checkDuplicate(userId, term);
+    return this.vocabularyService.checkDuplicate(
+      userId,
+      query.term ?? '',
+      query.languageCode ?? 'en',
+    );
   }
 
   @Post()

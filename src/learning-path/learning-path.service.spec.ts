@@ -716,4 +716,68 @@ describe('LearningPathService', () => {
     expect(pack.readingListening.questions.length).toBeGreaterThanOrEqual(2);
     expect(pack.studyGuide.grammarPoints.length).toBeGreaterThanOrEqual(1);
   });
+
+  it('scopes overview to Korean TOPIK tracks and updates Korean goal independently', async () => {
+    const koreanTrack: LearningPathTrack = {
+      ...sampleTrack,
+      id: 4,
+      code: 'topik_1_2',
+      title: 'TOPIK I · 1~2급',
+      cefrLevel: 'A2',
+      languageCode: 'ko',
+      summary: 'Korean foundation track',
+      sortOrder: 4,
+    };
+    const koreanPart: LearningPathPart = {
+      ...samplePart,
+      id: 40,
+      trackId: 4,
+      track: koreanTrack,
+      title: '일상 기초 회화',
+    };
+    const koreanUnit: LearningPathUnit = {
+      ...sampleUnit1,
+      id: 401,
+      partId: 40,
+      part: koreanPart,
+      slug: 'ko-greetings-intro',
+      title: '자기소개와 인사',
+      topicName: '자기소개',
+    };
+
+    userRepo.findOneBy.mockResolvedValue({
+      id: 7,
+      learningLanguage: 'en',
+      learningGoalBand: 'band_45_55',
+      currentLevel: 'B1',
+      koreanGoalBand: 'topik_1_2',
+      koreanCurrentLevel: 'A1',
+      dailyGoalMinutes: 15,
+    });
+    trackRepo.find.mockResolvedValue([sampleTrack, koreanTrack]);
+    partRepo.find.mockResolvedValue([koreanPart]);
+    unitRepo.find.mockResolvedValue([koreanUnit]);
+
+    const koOverview = await service.getOverview(7, undefined, 'ko');
+    expect(koOverview.languageCode).toBe('ko');
+    expect(koOverview.tracks).toHaveLength(1);
+    expect(koOverview.activeTrack.code).toBe('topik_1_2');
+    expect(koOverview.goal.learningGoalBand).toBe('topik_1_2');
+
+    const updatedKoGoal = await service.updateGoal(7, {
+      learningGoalBand: 'topik_3_4',
+      languageCode: 'ko',
+      currentLevel: 'B1',
+      dailyGoalMinutes: 30,
+    });
+    expect(updatedKoGoal.languageCode).toBe('ko');
+    expect(userRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        learningGoalBand: 'band_45_55',
+        koreanGoalBand: 'topik_3_4',
+        koreanCurrentLevel: 'B1',
+        dailyGoalMinutes: 30,
+      }),
+    );
+  });
 });

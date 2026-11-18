@@ -3,14 +3,23 @@ import {
   ArrayMaxSize,
   IsArray,
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   Max,
   Min,
 } from 'class-validator';
+import {
+  type LearningLanguageCode,
+  SUPPORTED_LEARNING_LANGUAGES,
+} from '../../common/constants/learning-languages.js';
 import { FlashcardSessionMode } from '../entities/flashcard.enums.js';
 
 export class CreateFlashcardSessionDto {
+  @IsOptional()
+  @IsIn(SUPPORTED_LEARNING_LANGUAGES)
+  languageCode?: LearningLanguageCode;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()

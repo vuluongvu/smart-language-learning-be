@@ -11,6 +11,11 @@ import {
 } from '../ai/ai-conversation.service.js';
 import { AiService } from '../ai/ai.service.js';
 import { ConversationLevel } from '../ai/entities/ai-conversation-session.entity.js';
+import {
+  getLearningLanguageDisplayName,
+  type LearningLanguageCode,
+  normalizeLearningLanguage,
+} from '../common/constants/learning-languages.js';
 import { LanguagesService } from '../languages/languages.service.js';
 import { TopicVocabulary } from '../topics/entities/topic-vocabulary.entity.js';
 import { Topic } from '../topics/entities/topic.entity.js';
@@ -25,6 +30,7 @@ import {
   EvaluateUnitWritingDto,
   GenerateAiLearningPathDto,
   GenerateUnitStudyGuideDto,
+  KOREAN_GOAL_BANDS,
   LEARNING_GOAL_BANDS,
   RegenerateAiUnitDto,
   SaveUnitWordsDto,
@@ -103,6 +109,7 @@ export interface LearningPathTrackSummary {
 }
 
 export interface LearningPathOverview {
+  languageCode: LearningLanguageCode;
   goal: {
     learningGoalBand: string;
     currentLevel: string;
@@ -200,6 +207,7 @@ export class LearningPathService {
   async getOverview(
     userId: number,
     requestedBand?: string,
+    requestedLang?: LearningLanguageCode,
   ): Promise<LearningPathOverview> {
     await this.catalogService.ensureSeeded();
 
@@ -208,15 +216,34 @@ export class LearningPathService {
       throw new NotFoundException('User not found');
     }
 
-    const tracks = await this.trackRepo.find({
+    const allTracks = await this.trackRepo.find({
       where: [{ ownerUserId: IsNull() }, { ownerUserId: userId }],
       order: { isAiGenerated: 'ASC', sortOrder: 'ASC', id: 'ASC' },
     });
-    if (tracks.length === 0) {
+    if (allTracks.length === 0) {
       throw new NotFoundException('Learning path catalog is empty');
     }
 
-    const goalBand = user.learningGoalBand || 'band_45_55';
+    const inferredFromBand = requestedBand?.trim()
+      ? allTracks.find((t) => t.code === requestedBand.trim())?.languageCode
+      : undefined;
+    const activeLanguage = normalizeLearningLanguage(
+      requestedLang ?? inferredFromBand ?? user.learningLanguage ?? 'en',
+    );
+
+    const languageTracks = allTracks.filter(
+      (t) => normalizeLearningLanguage(t.languageCode) === activeLanguage,
+    );
+    const tracks = languageTracks.length > 0 ? languageTracks : allTracks;
+
+    const goalBand =
+      activeLanguage === 'ko'
+        ? user.koreanGoalBand || 'topik_1_2'
+        : user.learningGoalBand || 'band_45_55';
+    const currentLevel =
+      activeLanguage === 'ko'
+        ? user.koreanCurrentLevel || 'A1'
+        : user.currentLevel || 'B1';
     const targetBandCode = requestedBand?.trim() || goalBand;
     const activeTrack =
       tracks.find((t) => t.code === targetBandCode) ??
@@ -304,9 +331,10 @@ export class LearningPathService {
     }
 
     return {
+      languageCode: normalizeLearningLanguage(activeTrack.languageCode),
       goal: {
         learningGoalBand: goalBand,
-        currentLevel: user.currentLevel || 'B1',
+        currentLevel,
         dailyGoalMinutes: user.dailyGoalMinutes || 15,
       },
       tracks: tracks.map((t) => this.toTrackSummary(t)),
@@ -339,16 +367,31 @@ export class LearningPathService {
       throw new NotFoundException('User not found');
     }
 
-    user.learningGoalBand = dto.learningGoalBand;
-    if (dto.currentLevel !== undefined) {
-      user.currentLevel = dto.currentLevel;
+    const isKoreanGoal =
+      dto.languageCode === 'ko' ||
+      (KOREAN_GOAL_BANDS as readonly string[]).includes(dto.learningGoalBand);
+
+    if (isKoreanGoal) {
+      user.koreanGoalBand = dto.learningGoalBand;
+      if (dto.currentLevel !== undefined) {
+        user.koreanCurrentLevel = dto.currentLevel;
+      }
+    } else {
+      user.learningGoalBand = dto.learningGoalBand;
+      if (dto.currentLevel !== undefined) {
+        user.currentLevel = dto.currentLevel;
+      }
     }
     if (dto.dailyGoalMinutes !== undefined) {
       user.dailyGoalMinutes = dto.dailyGoalMinutes;
     }
     await this.userRepo.save(user);
 
-    return this.getOverview(userId, dto.learningGoalBand);
+    return this.getOverview(
+      userId,
+      dto.learningGoalBand,
+      isKoreanGoal ? 'ko' : 'en',
+    );
   }
 
   async getUnitDetail(
@@ -357,10 +400,12 @@ export class LearningPathService {
   ): Promise<LearningPathUnitDetailView> {
     const { unit, part, track } = await this.loadUnitContext(unitId, userId);
     const progress = await this.progressRepo.findOneBy({ userId, unitId });
+    const trackLang = normalizeLearningLanguage(track.languageCode);
 
     const existingTerms = await this.vocabularyService.findExistingTermSet(
       userId,
       unit.vocabularyJson.map((w) => w.term),
+      trackLang,
     );
 
     return {
@@ -403,11 +448,17 @@ export class LearningPathService {
     totalUnitWords: number;
     progress: UnitProgressView;
   }> {
-    const { unit } = await this.loadUnitContext(unitId, userId);
+    const { unit, track } = await this.loadUnitContext(unitId, userId);
+    const trackLang = normalizeLearningLanguage(track.languageCode);
     const progress = await this.getOrCreateProgress(userId, unitId);
-    const topic = await this.resolveUnitTopic(userId, unit, progress);
+    const topic = await this.resolveUnitTopic(
+      userId,
+      unit,
+      progress,
+      trackLang,
+    );
 
-    const language = await this.languagesService.findActiveByCode('en');
+    const language = await this.languagesService.findActiveByCode(trackLang);
     const unitTerms = unit.vocabularyJson.map((w) =>
       w.term.trim().toLowerCase(),
     );
@@ -439,6 +490,7 @@ export class LearningPathService {
 
     if (missingWords.length > 0) {
       await this.vocabularyService.createBulk(userId, {
+        languageCode: trackLang,
         topicIds: [topic.id],
         items: missingWords.map((w) => ({
           term: w.term,
@@ -447,6 +499,7 @@ export class LearningPathService {
           definition: w.definition,
           example: w.example,
           notes: w.notes,
+          languageCode: trackLang,
           source: VocabularySource.IMPORT,
         })),
       });
@@ -540,14 +593,19 @@ export class LearningPathService {
     feedback: UnitWritingFeedback;
     progress: UnitProgressView;
   }> {
+    const { unit, track } = await this.loadUnitContext(unitId, userId);
+    const trackLang = normalizeLearningLanguage(track.languageCode);
+    const targetLangName = getLearningLanguageDisplayName(trackLang);
     const cleanText = dto.text.trim();
-    if (cleanText.length < 10) {
+    const minChars = trackLang === 'ko' ? 5 : 10;
+    if (cleanText.length < minChars) {
       throw new BadRequestException(
-        'Please write at least a full English sentence before submitting.',
+        trackLang === 'ko'
+          ? 'Please write at least a full Korean sentence before submitting.'
+          : 'Please write at least a full English sentence before submitting.',
       );
     }
 
-    const { unit, track } = await this.loadUnitContext(unitId, userId);
     const explainLangName =
       dto.explanationLang === 'en' ? 'English' : 'Vietnamese';
 
@@ -560,20 +618,29 @@ export class LearningPathService {
       (term) => !normalizedLower.includes(term.toLowerCase()),
     );
 
+    const estimatedHint =
+      trackLang === 'ko'
+        ? 'short TOPIK estimate string like TOPIK 2급 or TOPIK 3급'
+        : 'short Band estimate string like Band 5.0';
+    const koreanCheckRule =
+      trackLang === 'ko'
+        ? ' Evaluate Korean Hangul spelling, word spacing (띄어쓰기), particle accuracy (은/는, 이/가, 을/를), verb endings, and honorific consistency.'
+        : '';
+
     const { data } = await this.aiService.chatJson<RawWritingEvalResponse>(
       [
         {
           role: 'system',
           content:
-            `You evaluate a learner's short English paragraph for Unit "${unit.title}". Target Band: ${unit.writingPromptJson.targetBand} (CEFR ${track.cefrLevel}). Grammar focus: ${unit.grammarFocus}. Explanation language: ${explainLangName}.\n` +
+            `You evaluate a learner's short ${targetLangName} paragraph for Unit "${unit.title}". Target level: ${unit.writingPromptJson.targetBand} (CEFR ${track.cefrLevel}). Grammar focus: ${unit.grammarFocus}. Explanation language: ${explainLangName}.${koreanCheckRule}\n` +
             `Return ONLY valid JSON:\n` +
             `{\n` +
-            `  "estimatedBand": "short Band estimate string like Band 5.0",\n` +
+            `  "estimatedBand": "${estimatedHint}",\n` +
             `  "summary": "clear evaluation whether the paragraph is accurate, natural, and fits the prompt (in ${explainLangName})",\n` +
             `  "notableErrors": [{"original":"wrong phrase","correction":"better phrase","reason":"concise reason in ${explainLangName}"}],\n` +
-            `  "upgradedVersion": "natural rewritten paragraph calibrated to ${unit.writingPromptJson.targetBand} (do not use overly obscure C2 vocabulary if target is lower)",\n` +
+            `  "upgradedVersion": "natural rewritten ${targetLangName} paragraph calibrated to ${unit.writingPromptJson.targetBand}",\n` +
             `  "explanation": "concise Markdown tips (**bold**, numbered points separated by newlines) in ${explainLangName}",\n` +
-            `  "suggestedWords": [{"term":"word/phrase","partOfSpeech":"noun|verb|adjective|adverb|phrase|null","definition":"meaning in ${explainLangName}","example":"short English sentence"}]\n` +
+            `  "suggestedWords": [{"term":"word/phrase in ${targetLangName}","partOfSpeech":"noun|verb|adjective|adverb|phrase|null","definition":"meaning in ${explainLangName}","example":"short ${targetLangName} sentence"}]\n` +
             `}\n` +
             `Rules: Keep notableErrors <= 4 items ([] if none) and suggestedWords <= 3 items.`,
         },
@@ -636,11 +703,13 @@ export class LearningPathService {
     }
 
     const level = this.mapCefrToConversationLevel(track.cefrLevel);
+    const trackLang = normalizeLearningLanguage(track.languageCode);
     const targetWordsHint = unit.vocabularyJson
       .slice(0, 5)
       .map((w) => w.term)
       .join(', ');
     const session = await this.aiConversationService.startSession(userId, {
+      languageCode: trackLang,
       topic:
         `${unit.title}: ${unit.speakingTopicPrompt} (try words: ${targetWordsHint})`.slice(
           0,
@@ -684,13 +753,20 @@ export class LearningPathService {
     addedCount: number;
     skippedCount: number;
   }> {
-    const { unit } = await this.loadUnitContext(unitId, userId);
+    const { unit, track } = await this.loadUnitContext(unitId, userId);
+    const trackLang = normalizeLearningLanguage(track.languageCode);
     const progress = await this.getOrCreateProgress(userId, unitId);
-    const topic = await this.resolveUnitTopic(userId, unit, progress);
+    const topic = await this.resolveUnitTopic(
+      userId,
+      unit,
+      progress,
+      trackLang,
+    );
 
     const existing = await this.vocabularyService.findExistingTermSet(
       userId,
       dto.words.map((w) => w.term),
+      trackLang,
     );
     const seen = new Set<string>();
     const newWords = dto.words.filter((w) => {
@@ -704,12 +780,14 @@ export class LearningPathService {
 
     if (newWords.length > 0) {
       await this.vocabularyService.createBulk(userId, {
+        languageCode: trackLang,
         topicIds: [topic.id],
         items: newWords.map((w) => ({
           term: w.term.trim(),
           partOfSpeech: w.partOfSpeech ?? null,
           definition: w.definition.trim(),
           example: w.example ?? null,
+          languageCode: trackLang,
           source: VocabularySource.AI,
         })),
       });
@@ -744,8 +822,19 @@ export class LearningPathService {
       throw new NotFoundException('User not found');
     }
 
-    const targetBand = dto.targetBand ?? user.learningGoalBand ?? 'band_45_55';
-    const currentLevel = dto.currentLevel ?? user.currentLevel ?? 'B1';
+    const trackLang = normalizeLearningLanguage(
+      dto.languageCode ?? user.learningLanguage,
+    );
+    const defaultBand =
+      trackLang === 'ko'
+        ? user.koreanGoalBand || 'topik_1_2'
+        : user.learningGoalBand || 'band_45_55';
+    const defaultLevel =
+      trackLang === 'ko'
+        ? user.koreanCurrentLevel || 'A1'
+        : user.currentLevel || 'B1';
+    const targetBand = dto.targetBand ?? defaultBand;
+    const currentLevel = dto.currentLevel ?? defaultLevel;
     const unitCount = dto.unitCount ?? 3;
     const lang = dto.explanationLang ?? 'vi';
 
@@ -756,6 +845,7 @@ export class LearningPathService {
       currentLevel,
       unitCount,
       explanationLang: lang,
+      languageCode: trackLang,
     });
 
     const generatedPacks: Array<{
@@ -772,6 +862,7 @@ export class LearningPathService {
         learningFocus: dto.learningFocus,
         avoidTerms,
         explanationLang: lang,
+        languageCode: trackLang,
       });
       avoidTerms.push(...pack.vocabulary.map((w) => w.term));
       generatedPacks.push({ outline: unitOutline, pack });
@@ -793,7 +884,7 @@ export class LearningPathService {
           code: trackCode,
           title: outline.trackTitle,
           cefrLevel: outline.cefrLevel,
-          languageCode: 'en',
+          languageCode: trackLang,
           summary: outline.trackSummary,
           ownerUserId: userId,
           isAiGenerated: true,
@@ -837,7 +928,7 @@ export class LearningPathService {
       return track;
     });
 
-    return this.getOverview(userId, createdTrack.code);
+    return this.getOverview(userId, createdTrack.code, trackLang);
   }
 
   async deleteAiTrack(
@@ -855,8 +946,9 @@ export class LearningPathService {
       throw new BadRequestException('Curated learning paths cannot be deleted');
     }
 
+    const trackLang = normalizeLearningLanguage(track.languageCode);
     await this.trackRepo.remove(track);
-    return this.getOverview(userId);
+    return this.getOverview(userId, undefined, trackLang);
   }
 
   async generateUnitStudyGuide(
@@ -865,6 +957,7 @@ export class LearningPathService {
     dto: GenerateUnitStudyGuideDto,
   ): Promise<{ studyGuide: UnitStudyGuide }> {
     const { unit, track } = await this.loadUnitContext(unitId, userId);
+    const trackLang = normalizeLearningLanguage(track.languageCode);
     const studyGuide = await this.learningPathAiService.generateStudyGuideOnly({
       unitTitle: unit.title,
       grammarFocus: unit.grammarFocus,
@@ -873,6 +966,7 @@ export class LearningPathService {
       cefrLevel: track.cefrLevel,
       focusGoal: dto.focusGoal,
       explanationLang: dto.explanationLang ?? 'vi',
+      languageCode: trackLang,
     });
 
     const progress = await this.getOrCreateProgress(userId, unitId);
@@ -895,12 +989,13 @@ export class LearningPathService {
     }
 
     const lang = dto.explanationLang ?? 'vi';
+    const trackLang = normalizeLearningLanguage(track.languageCode);
     const matchingBandCode =
       LEARNING_GOAL_BANDS.find(
         (b) =>
-          this.learningPathAiService.resolveBandMetadata(b).targetCefr ===
-          track.cefrLevel,
-      ) ?? 'band_45_55';
+          this.learningPathAiService.resolveBandMetadata(b, trackLang)
+            .targetCefr === track.cefrLevel,
+      ) ?? (trackLang === 'ko' ? 'topik_1_2' : 'band_45_55');
 
     const pack = await this.learningPathAiService.generateUnitStudyPack({
       goalTopic: track.sourcePrompt || track.title,
@@ -916,6 +1011,7 @@ export class LearningPathService {
       targetBand: matchingBandCode,
       learningFocus: dto.focusGoal,
       explanationLang: lang,
+      languageCode: trackLang,
     });
 
     unit.vocabularyJson = pack.vocabulary;
@@ -995,8 +1091,9 @@ export class LearningPathService {
     userId: number,
     unit: LearningPathUnit,
     progress: UserUnitProgress,
+    languageCode: LearningLanguageCode = 'en',
   ): Promise<Topic> {
-    const language = await this.languagesService.findActiveByCode('en');
+    const language = await this.languagesService.findActiveByCode(languageCode);
 
     if (progress.topicId) {
       const existingOwned = await this.dataSource

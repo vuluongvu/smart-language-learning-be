@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
+import { isSupportedLearningLanguage } from '../common/constants/learning-languages.js';
 import { PaginationMeta } from '../common/dto/pagination-query.dto.js';
 import { assertResourceOwnership } from '../common/guards/ownership.guard.js';
 import { LanguagesService } from '../languages/languages.service.js';
@@ -64,9 +65,18 @@ export class TopicsService {
       .createQueryBuilder('topic')
       .where('topic.userId = :userId', { userId });
 
+    if (query.languageCode) {
+      const language = await this.languagesService.findActiveByCode(
+        query.languageCode,
+      );
+      qb.andWhere('topic.languageId = :languageId', {
+        languageId: language.id,
+      });
+    }
+
     if (search) {
       qb.andWhere(
-        '(LOWER(topic.name) LIKE :search OR LOWER(COALESCE(topic.description, "")) LIKE :search)',
+        "(LOWER(topic.name) LIKE :search OR LOWER(COALESCE(topic.description, '')) LIKE :search)",
         { search: `%${search.toLowerCase()}%` },
       );
     }
@@ -128,13 +138,13 @@ export class TopicsService {
     }
 
     const code = (dto.languageCode ?? 'en').trim().toLowerCase();
-    if (code !== 'en') {
+    if (!isSupportedLearningLanguage(code)) {
       throw new BadRequestException(
-        'MVP currently only supports English (en) topics',
+        'Supported languages are English (en) and Korean (ko)',
       );
     }
 
-    const language = await this.languagesService.findActiveByCode('en');
+    const language = await this.languagesService.findActiveByCode(code);
 
     const saved = await this.topicRepository.save(
       this.topicRepository.create({

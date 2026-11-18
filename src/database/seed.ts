@@ -48,6 +48,13 @@ async function seedDevelopmentData(): Promise<void> {
         );
       }
 
+      const korean = await langRepo.findOne({ where: { code: 'ko' } });
+      if (!korean) {
+        await langRepo.save(
+          langRepo.create({ code: 'ko', name: 'Korean', isActive: true }),
+        );
+      }
+
       const userRepo = manager.getRepository(User);
       const demoEmail = 'demo@argonlearning.local';
       const existingDemo = await userRepo.findOne({

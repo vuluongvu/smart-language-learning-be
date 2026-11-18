@@ -3,11 +3,17 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
+import {
+  type LearningLanguageCode,
+  normalizeLearningLanguage,
+} from '../common/constants/learning-languages.js';
 import { PaginationMeta } from '../common/dto/pagination-query.dto.js';
 import { assertResourceOwnership } from '../common/guards/ownership.guard.js';
+import { LanguagesService } from '../languages/languages.service.js';
 import { ActivitySourceType } from '../streaks/entities/learning-activity-event.entity.js';
 import { StreaksService } from '../streaks/streaks.service.js';
 import { TopicVocabulary } from '../topics/entities/topic-vocabulary.entity.js';
@@ -61,6 +67,7 @@ export interface FlashcardSessionSummaryView {
   id: number;
   topicId: number | null;
   topicName: string | null;
+  languageCode: string;
   mode: FlashcardSessionMode;
   targetCount: number;
   reviewedCount: number;
@@ -104,6 +111,7 @@ export class FlashcardsService {
     private readonly scheduler: ReviewSchedulerService,
     private readonly streaksService: StreaksService,
     private readonly dataSource: DataSource,
+    @Optional() private readonly languagesService?: LanguagesService,
   ) {}
 
   async getDueQueue(
@@ -124,7 +132,11 @@ export class FlashcardsService {
 
     const now = new Date();
     const { items: scopedItems, progressByVocab } =
-      await this.loadScopedVocabularyAndProgress(userId, query.topicId);
+      await this.loadScopedVocabularyAndProgress(
+        userId,
+        query.topicId,
+        query.languageCode,
+      );
 
     const summary = this.computeDueSummary(scopedItems, progressByVocab, now);
     const filtered = this.filterAndOrderByMode(
@@ -187,6 +199,7 @@ export class FlashcardsService {
         await this.loadScopedVocabularyAndProgress(
           userId,
           dto.topicId ?? undefined,
+          dto.languageCode,
         );
       selectedCards = this.filterAndOrderByMode(
         scopedItems,
@@ -207,6 +220,7 @@ export class FlashcardsService {
       this.sessionRepository.create({
         userId,
         topicId: dto.topicId ?? null,
+        languageCode: normalizeLearningLanguage(dto.languageCode),
         mode,
         cardIds,
         targetCount: cardIds.length,
@@ -235,6 +249,11 @@ export class FlashcardsService {
       .createQueryBuilder('session')
       .where('session.userId = :userId', { userId });
 
+    if (query.languageCode) {
+      qb.andWhere('session.languageCode = :languageCode', {
+        languageCode: query.languageCode,
+      });
+    }
     if (query.status) {
       qb.andWhere('session.status = :status', { status: query.status });
     }
@@ -524,6 +543,7 @@ export class FlashcardsService {
   private async loadScopedVocabularyAndProgress(
     userId: number,
     topicId?: number,
+    languageCode?: LearningLanguageCode,
   ): Promise<{
     items: VocabularyItem[];
     progressByVocab: Map<number, VocabularyProgress>;
@@ -531,6 +551,14 @@ export class FlashcardsService {
     const qb = this.vocabularyRepository
       .createQueryBuilder('vocab')
       .where('vocab.userId = :userId', { userId });
+
+    if (languageCode && this.languagesService) {
+      const language =
+        await this.languagesService.findActiveByCode(languageCode);
+      qb.andWhere('vocab.languageId = :languageId', {
+        languageId: language.id,
+      });
+    }
 
     if (topicId) {
       qb.innerJoin(
@@ -756,6 +784,7 @@ export class FlashcardsService {
       topicName: session.topicId
         ? (topicNames.get(session.topicId) ?? null)
         : null,
+      languageCode: session.languageCode ?? 'en',
       mode: session.mode,
       targetCount: session.targetCount,
       reviewedCount: session.reviewedCount,

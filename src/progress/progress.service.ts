@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, In, Repository } from 'typeorm';
+import { type LearningLanguageCode } from '../common/constants/learning-languages.js';
 import {
   addCalendarDays,
   normalizeDateOnly,
@@ -12,8 +13,10 @@ import {
   VocabularyProgressStatus,
 } from '../flashcards/entities/flashcard.enums.js';
 import { VocabularyProgress } from '../flashcards/entities/vocabulary-progress.entity.js';
+import { LanguagesService } from '../languages/languages.service.js';
 import { QuizAnswer } from '../quizzes/entities/quiz-answer.entity.js';
 import { QuizAttempt } from '../quizzes/entities/quiz-attempt.entity.js';
+import { Quiz } from '../quizzes/entities/quiz.entity.js';
 import { QuizAttemptStatus } from '../quizzes/entities/quiz.enums.js';
 import { UserDailyActivity } from '../streaks/entities/user-daily-activity.entity.js';
 import {
@@ -22,7 +25,10 @@ import {
 } from '../streaks/streaks.service.js';
 import { Topic } from '../topics/entities/topic.entity.js';
 import { VocabularyItem } from '../vocabulary/entities/vocabulary-item.entity.js';
-import type { ProgressHistoryQueryDto } from './dto/progress-history-query.dto.js';
+import type {
+  ProgressHistoryQueryDto,
+  ProgressOverviewQueryDto,
+} from './dto/progress-history-query.dto.js';
 
 export interface ProgressVocabularyMetricsDto {
   total: number;
@@ -118,11 +124,141 @@ export class ProgressService {
     @InjectRepository(UserDailyActivity)
     private readonly dailyActivityRepository: Repository<UserDailyActivity>,
     private readonly streaksService: StreaksService,
+    @Optional() private readonly languagesService?: LanguagesService,
   ) {}
 
-  async getOverview(userId: number): Promise<ProgressOverviewResponseDto> {
-    const streak = await this.streaksService.getMyStreak(userId);
+  private async resolveLanguageScope(
+    languageCode?: LearningLanguageCode,
+  ): Promise<{
+    languageId: number;
+    languageCode: LearningLanguageCode;
+  } | null> {
+    if (!languageCode || !this.languagesService) {
+      return null;
+    }
+    const language = await this.languagesService.findActiveByCode(languageCode);
+    return { languageId: language.id, languageCode };
+  }
+
+  private async countProgressByStatus(
+    userId: number,
+    status: VocabularyProgressStatus,
+    languageId?: number,
+  ): Promise<number> {
+    if (!languageId) {
+      return this.progressRepository.count({ where: { userId, status } });
+    }
+    return this.progressRepository
+      .createQueryBuilder('vp')
+      .innerJoin(
+        VocabularyItem,
+        'v',
+        'v.id = vp.vocabulary_id AND v.language_id = :languageId',
+        { languageId },
+      )
+      .where('vp.user_id = :userId', { userId })
+      .andWhere('vp.status = :status', { status })
+      .getCount();
+  }
+
+  private async countHardFlashcards(
+    userId: number,
+    languageId?: number,
+  ): Promise<number> {
+    if (!languageId) {
+      return this.progressRepository.count({
+        where: {
+          userId,
+          lastRating: In([ReviewRating.AGAIN, ReviewRating.HARD]),
+        },
+      });
+    }
+    return this.progressRepository
+      .createQueryBuilder('vp')
+      .innerJoin(
+        VocabularyItem,
+        'v',
+        'v.id = vp.vocabulary_id AND v.language_id = :languageId',
+        { languageId },
+      )
+      .where('vp.user_id = :userId', { userId })
+      .andWhere('vp.last_rating IN (:...ratings)', {
+        ratings: [ReviewRating.AGAIN, ReviewRating.HARD],
+      })
+      .getCount();
+  }
+
+  private async countQuizAttempts(
+    userId: number,
+    languageCode?: LearningLanguageCode,
+  ): Promise<number> {
+    if (!languageCode) {
+      return this.attemptRepository.count({ where: { userId } });
+    }
+    return this.attemptRepository
+      .createQueryBuilder('att')
+      .innerJoin(
+        Quiz,
+        'q',
+        'q.id = att.quiz_id AND q.language_code = :languageCode',
+        { languageCode },
+      )
+      .where('att.user_id = :userId', { userId })
+      .getCount();
+  }
+
+  private async findCompletedQuizAttempts(
+    userId: number,
+    languageCode?: LearningLanguageCode,
+    take?: number,
+  ) {
+    if (!languageCode) {
+      return this.attemptRepository.find({
+        where: { userId, status: QuizAttemptStatus.COMPLETED },
+        select: {
+          id: true,
+          quizId: true,
+          quizTitleSnapshot: true,
+          score: true,
+          correctCount: true,
+          totalQuestions: true,
+          completedAt: true,
+        },
+        order: { completedAt: 'DESC', id: 'DESC' },
+        ...(take ? { take } : {}),
+      });
+    }
+    const qb = this.attemptRepository
+      .createQueryBuilder('att')
+      .innerJoin(
+        Quiz,
+        'q',
+        'q.id = att.quiz_id AND q.language_code = :languageCode',
+        { languageCode },
+      )
+      .where('att.user_id = :userId', { userId })
+      .andWhere('att.status = :status', {
+        status: QuizAttemptStatus.COMPLETED,
+      })
+      .orderBy('att.completed_at', 'DESC')
+      .addOrderBy('att.id', 'DESC');
+    if (take) {
+      qb.take(take);
+    }
+    return qb.getMany();
+  }
+
+  async getOverview(
+    userId: number,
+    query?: ProgressOverviewQueryDto,
+  ): Promise<ProgressOverviewResponseDto> {
+    const [streak, scope] = await Promise.all([
+      this.streaksService.getMyStreak(userId),
+      this.resolveLanguageScope(query?.languageCode),
+    ]);
     const now = new Date();
+    const langId = scope?.languageId;
+    const langCode = scope?.languageCode;
 
     const [
       totalVocab,
@@ -138,47 +274,51 @@ export class ProgressService {
       recentActivity14d,
       weakVocabulary,
     ] = await Promise.all([
-      this.vocabularyRepository.count({ where: { userId } }),
-      this.progressRepository.count({
-        where: { userId, status: VocabularyProgressStatus.LEARNING },
+      this.vocabularyRepository.count({
+        where: langId ? { userId, languageId: langId } : { userId },
       }),
-      this.progressRepository.count({
-        where: { userId, status: VocabularyProgressStatus.MASTERED },
+      this.countProgressByStatus(
+        userId,
+        VocabularyProgressStatus.LEARNING,
+        langId,
+      ),
+      this.countProgressByStatus(
+        userId,
+        VocabularyProgressStatus.MASTERED,
+        langId,
+      ),
+      this.countDueFlashcards(userId, now, langId),
+      this.countHardFlashcards(userId, langId),
+      this.topicRepository.count({
+        where: langId ? { userId, languageId: langId } : { userId },
       }),
-      this.countDueFlashcards(userId, now),
-      this.progressRepository.count({
-        where: {
-          userId,
-          lastRating: In([ReviewRating.AGAIN, ReviewRating.HARD]),
-        },
-      }),
-      this.topicRepository.count({ where: { userId } }),
-      this.attemptRepository.count({ where: { userId } }),
-      this.attemptRepository.find({
-        where: { userId, status: QuizAttemptStatus.COMPLETED },
-        select: {
-          id: true,
-          quizId: true,
-          quizTitleSnapshot: true,
-          score: true,
-          correctCount: true,
-          totalQuestions: true,
-          completedAt: true,
-        },
-        order: { completedAt: 'DESC', id: 'DESC' },
+      this.countQuizAttempts(userId, langCode),
+      this.findCompletedQuizAttempts(userId, langCode),
+      this.sessionRepository.count({
+        where: langCode
+          ? {
+              userId,
+              languageCode: langCode,
+              status: FlashcardSessionStatus.COMPLETED,
+            }
+          : { userId, status: FlashcardSessionStatus.COMPLETED },
       }),
       this.sessionRepository.count({
-        where: { userId, status: FlashcardSessionStatus.COMPLETED },
-      }),
-      this.sessionRepository.count({
-        where: {
-          userId,
-          status: FlashcardSessionStatus.COMPLETED,
-          isStreakEligible: true,
-        },
+        where: langCode
+          ? {
+              userId,
+              languageCode: langCode,
+              status: FlashcardSessionStatus.COMPLETED,
+              isStreakEligible: true,
+            }
+          : {
+              userId,
+              status: FlashcardSessionStatus.COMPLETED,
+              isStreakEligible: true,
+            },
       }),
       this.buildDailyActivitySeries(userId, streak.todayDate, 14),
-      this.getWeakVocabulary(userId, 8),
+      this.getWeakVocabulary(userId, 8, scope ?? undefined),
     ]);
 
     const newCount = Math.max(0, totalVocab - learningCount - masteredCount);
@@ -245,26 +385,16 @@ export class ProgressService {
     query: ProgressHistoryQueryDto,
   ): Promise<ProgressHistoryResponseDto> {
     const days = query.days ?? 14;
-    const streak = await this.streaksService.getMyStreak(userId);
+    const [streak, scope] = await Promise.all([
+      this.streaksService.getMyStreak(userId),
+      this.resolveLanguageScope(query.languageCode),
+    ]);
 
     const [dailyActivities, recentAttemptRows, weakVocabulary] =
       await Promise.all([
         this.buildDailyActivitySeries(userId, streak.todayDate, days),
-        this.attemptRepository.find({
-          where: { userId, status: QuizAttemptStatus.COMPLETED },
-          select: {
-            id: true,
-            quizId: true,
-            quizTitleSnapshot: true,
-            score: true,
-            correctCount: true,
-            totalQuestions: true,
-            completedAt: true,
-          },
-          order: { completedAt: 'DESC', id: 'DESC' },
-          take: 15,
-        }),
-        this.getWeakVocabulary(userId, 20),
+        this.findCompletedQuizAttempts(userId, scope?.languageCode, 15),
+        this.getWeakVocabulary(userId, 20, scope ?? undefined),
       ]);
 
     return {
@@ -287,8 +417,12 @@ export class ProgressService {
     };
   }
 
-  private async countDueFlashcards(userId: number, now: Date): Promise<number> {
-    return this.vocabularyRepository
+  private async countDueFlashcards(
+    userId: number,
+    now: Date,
+    languageId?: number,
+  ): Promise<number> {
+    const qb = this.vocabularyRepository
       .createQueryBuilder('v')
       .leftJoin(
         VocabularyProgress,
@@ -296,7 +430,13 @@ export class ProgressService {
         'vp.vocabulary_id = v.id AND vp.user_id = :userId',
         { userId },
       )
-      .where('v.user_id = :userId', { userId })
+      .where('v.user_id = :userId', { userId });
+
+    if (languageId) {
+      qb.andWhere('v.language_id = :languageId', { languageId });
+    }
+
+    return qb
       .andWhere(
         '(vp.id IS NULL OR vp.next_review_at IS NULL OR vp.next_review_at <= :now)',
         { now },
@@ -343,8 +483,9 @@ export class ProgressService {
   private async getWeakVocabulary(
     userId: number,
     limit: number,
+    scope?: { languageId: number; languageCode: LearningLanguageCode },
   ): Promise<WeakVocabularyItemDto[]> {
-    const wrongRows = await this.answerRepository
+    const wrongQb = this.answerRepository
       .createQueryBuilder('ans')
       .innerJoin(QuizAttempt, 'att', 'att.id = ans.attempt_id')
       .select('ans.vocabulary_id_snapshot', 'vocabularyId')
@@ -354,19 +495,45 @@ export class ProgressService {
         status: QuizAttemptStatus.COMPLETED,
       })
       .andWhere('ans.is_correct = :isCorrect', { isCorrect: false })
-      .andWhere('ans.vocabulary_id_snapshot IS NOT NULL')
+      .andWhere('ans.vocabulary_id_snapshot IS NOT NULL');
+
+    if (scope?.languageCode) {
+      wrongQb.innerJoin(
+        Quiz,
+        'qScope',
+        'qScope.id = att.quiz_id AND qScope.language_code = :languageCode',
+        { languageCode: scope.languageCode },
+      );
+    }
+
+    const wrongRows = await wrongQb
       .groupBy('ans.vocabulary_id_snapshot')
       .orderBy('wrongCount', 'DESC')
       .limit(limit * 2)
       .getRawMany<WrongVocabAggregateRow>();
 
-    const hardProgressRows = await this.progressRepository.find({
-      where: {
-        userId,
-        lastRating: In([ReviewRating.AGAIN, ReviewRating.HARD]),
-      },
-      take: limit * 2,
-    });
+    const hardProgressRows = scope?.languageId
+      ? await this.progressRepository
+          .createQueryBuilder('vp')
+          .innerJoin(
+            VocabularyItem,
+            'v',
+            'v.id = vp.vocabulary_id AND v.language_id = :languageId',
+            { languageId: scope.languageId },
+          )
+          .where('vp.user_id = :userId', { userId })
+          .andWhere('vp.last_rating IN (:...ratings)', {
+            ratings: [ReviewRating.AGAIN, ReviewRating.HARD],
+          })
+          .take(limit * 2)
+          .getMany()
+      : await this.progressRepository.find({
+          where: {
+            userId,
+            lastRating: In([ReviewRating.AGAIN, ReviewRating.HARD]),
+          },
+          take: limit * 2,
+        });
 
     const wrongCountByVocabId = new Map<number, number>();
     for (const row of wrongRows) {
@@ -391,7 +558,9 @@ export class ProgressService {
     const ids = Array.from(candidateIds);
     const [items, allProgressRows] = await Promise.all([
       this.vocabularyRepository.find({
-        where: { userId, id: In(ids) },
+        where: scope?.languageId
+          ? { userId, languageId: scope.languageId, id: In(ids) }
+          : { userId, id: In(ids) },
       }),
       this.progressRepository.find({
         where: { userId, vocabularyId: In(ids) },

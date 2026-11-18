@@ -14,6 +14,10 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import {
+  type LearningLanguageCode,
+  SUPPORTED_LEARNING_LANGUAGES,
+} from '../../common/constants/learning-languages.js';
 import { CreateVocabularyDto } from './create-vocabulary.dto.js';
 
 export type AiGenerateMode = 'topic' | 'passage';
@@ -36,6 +40,11 @@ export class AiEnrichVocabularyDto {
   @IsString()
   @MaxLength(500)
   context?: string;
+
+  @ApiPropertyOptional({ enum: SUPPORTED_LEARNING_LANGUAGES, default: 'en' })
+  @IsOptional()
+  @IsIn(SUPPORTED_LEARNING_LANGUAGES)
+  languageCode?: LearningLanguageCode;
 }
 
 export class AiGenerateVocabularyDto {
@@ -71,6 +80,11 @@ export class AiGenerateVocabularyDto {
   @IsInt()
   @Min(1)
   topicId?: number;
+
+  @ApiPropertyOptional({ enum: SUPPORTED_LEARNING_LANGUAGES, default: 'en' })
+  @IsOptional()
+  @IsIn(SUPPORTED_LEARNING_LANGUAGES)
+  languageCode?: LearningLanguageCode;
 }
 
 export class AiExtractImageVocabularyDto {
@@ -105,6 +119,12 @@ export class AiExtractImageVocabularyDto {
   @IsInt()
   @Min(1)
   topicId?: number;
+
+  @ApiPropertyOptional({ enum: SUPPORTED_LEARNING_LANGUAGES, default: 'en' })
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsIn(SUPPORTED_LEARNING_LANGUAGES)
+  languageCode?: LearningLanguageCode;
 }
 
 export class BulkCreateVocabularyDto {
@@ -128,4 +148,9 @@ export class BulkCreateVocabularyDto {
   @IsString()
   @MaxLength(120)
   newTopicName?: string | null;
+
+  @ApiPropertyOptional({ enum: SUPPORTED_LEARNING_LANGUAGES, default: 'en' })
+  @IsOptional()
+  @IsIn(SUPPORTED_LEARNING_LANGUAGES)
+  languageCode?: LearningLanguageCode;
 }

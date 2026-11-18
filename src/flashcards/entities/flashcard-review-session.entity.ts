@@ -34,6 +34,9 @@ export class FlashcardReviewSession {
   @JoinColumn({ name: 'topic_id' })
   topic: Topic | null;
 
+  @Column({ name: 'language_code', type: 'varchar', length: 16, default: 'en' })
+  languageCode: string;
+
   @Column({
     type: 'enum',
     enum: FlashcardSessionMode,
