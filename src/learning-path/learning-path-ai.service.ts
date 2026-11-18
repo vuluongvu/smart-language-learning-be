@@ -72,7 +72,7 @@ export class LearningPathAiService {
 
   async generatePathOutline(params: {
     goalTopic: string;
-    sourceMaterial?: string;
+    learningFocus?: string;
     targetBand: string;
     currentLevel: string;
     unitCount: number;
@@ -83,8 +83,8 @@ export class LearningPathAiService {
     );
     const explainLangName =
       params.explanationLang === 'en' ? 'English' : 'Vietnamese';
-    const materialBlock = params.sourceMaterial?.trim()
-      ? `\nLearner's source material / notes (extract themes & key points from this):\n${params.sourceMaterial.trim().slice(0, 2200)}`
+    const focusBlock = params.learningFocus?.trim()
+      ? `\nLearning emphasis requested by learner: ${params.learningFocus.trim()}`
       : '';
 
     const { data } = await this.aiService.chatJson<Record<string, unknown>>(
@@ -92,7 +92,7 @@ export class LearningPathAiService {
         {
           role: 'system',
           content:
-            `You design a structured English learning path curriculum. Output ONLY valid JSON:\n` +
+            `You design a structured English learning path curriculum purely from the learner's need and goal. Output ONLY valid JSON:\n` +
             `{\n` +
             `  "trackTitle": "short English track title <= 50 chars",\n` +
             `  "trackSummary": "1 concise sentence in ${explainLangName} explaining what the learner masters",\n` +
@@ -113,7 +113,7 @@ export class LearningPathAiService {
         },
         {
           role: 'user',
-          content: `Learning goal / topic: ${params.goalTopic}${materialBlock}`,
+          content: `Learner goal / topic: ${params.goalTopic}${focusBlock}`,
         },
       ],
       { temperature: 0.45, maxTokens: 700 },
@@ -184,7 +184,7 @@ export class LearningPathAiService {
     goalTopic: string;
     unit: AiUnitOutlineItem;
     targetBand: string;
-    sourceMaterial?: string;
+    learningFocus?: string;
     avoidTerms?: string[];
     explanationLang: 'vi' | 'en';
   }): Promise<AiUnitStudyPack> {
@@ -197,8 +197,8 @@ export class LearningPathAiService {
       params.explanationLang === 'en'
         ? 'concise clear English definition'
         : 'concise Vietnamese definition';
-    const materialBlock = params.sourceMaterial?.trim()
-      ? `\nSource material to incorporate:\n${params.sourceMaterial.trim().slice(0, 1800)}`
+    const focusBlock = params.learningFocus?.trim()
+      ? `\nEmphasis / preference: ${params.learningFocus.trim()}`
       : '';
     const avoidBlock =
       params.avoidTerms && params.avoidTerms.length > 0
@@ -243,7 +243,7 @@ export class LearningPathAiService {
             `Unit ${params.unit.unitNumber}: ${params.unit.title}\n` +
             `Topic: ${params.unit.topicName}\n` +
             `Grammar focus: ${params.unit.grammarFocus}` +
-            `${avoidBlock}${materialBlock}`,
+            `${avoidBlock}${focusBlock}`,
         },
       ],
       { temperature: 0.45, maxTokens: 1550 },
@@ -263,13 +263,13 @@ export class LearningPathAiService {
     targetTerms: string[];
     bandLabel: string;
     cefrLevel: string;
-    focusNote?: string;
+    focusGoal?: string;
     explanationLang: 'vi' | 'en';
   }): Promise<UnitStudyGuide> {
     const explainLangName =
       params.explanationLang === 'en' ? 'English' : 'Vietnamese';
-    const focusBlock = params.focusNote?.trim()
-      ? `\nLearner's specific request / pasted notes:\n${params.focusNote.trim()}`
+    const focusBlock = params.focusGoal?.trim()
+      ? `\nLearner's specific goal / emphasis: ${params.focusGoal.trim()}`
       : '';
 
     const { data } = await this.aiService.chatJson<Record<string, unknown>>(
