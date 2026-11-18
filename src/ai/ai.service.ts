@@ -276,10 +276,18 @@ export class AiService {
     options: Omit<AiChatOptions, 'jsonMode'> = {},
   ): Promise<{ model: string; data: T; usage?: AiChatResult['usage'] }> {
     const result = await this.chat(messages, { ...options, jsonMode: true });
-    const cleaned = result.content
+    let cleaned = result.content
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
       .trim()
       .replace(/^```(?:json)?\s*/i, '')
-      .replace(/\s*```$/, '');
+      .replace(/\s*```$/, '')
+      .trim();
+
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+    }
 
     try {
       const parsed = JSON.parse(cleaned) as unknown;
