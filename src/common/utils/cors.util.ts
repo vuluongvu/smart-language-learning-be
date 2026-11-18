@@ -4,7 +4,7 @@ export function parseCorsOrigins(
 ): string[] | boolean {
   const parsed = (rawOrigin ?? '')
     .split(',')
-    .map((origin) => origin.trim())
+    .map((origin) => origin.trim().replace(/\/+$/, ''))
     .filter((origin) => origin.length > 0 && origin !== '*');
 
   if (parsed.length > 0) {

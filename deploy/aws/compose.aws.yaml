@@ -1,0 +1,76 @@
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: ${APP_IMAGE:-argon-learning-be:staging}
+    container_name: argon-learning-be
+    env_file:
+      - path: .env.aws
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    expose:
+      - '3000'
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/v1/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 25s
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: argon-learning-caddy
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?Set API_DOMAIN in .env.aws (e.g. api.example.com or <ip-dashed>.sslip.io)}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - argon_aws_caddy_data:/data
+      - argon_aws_caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Optional built-in MySQL for single-EC2 trial deployments (enable via `--profile with-db`)
+  # Omit `--profile with-db` when pointing DB_HOST at AWS RDS MySQL.
+  mysql:
+    profiles: ['with-db']
+    image: mysql:8.4
+    container_name: argon-learning-mysql-aws
+    ports:
+      - '127.0.0.1:3306:3306'
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required with --profile with-db}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - argon_aws_mysql_data:/var/lib/mysql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'mysqladmin ping -h 127.0.0.1 -uroot -p"$${MYSQL_ROOT_PASSWORD}" --silent'
+      interval: 5s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+
+volumes:
+  argon_aws_mysql_data:
+  argon_aws_caddy_data:
+  argon_aws_caddy_config:
+
+networks:
+  default:
+    name: argon-learning-aws-network

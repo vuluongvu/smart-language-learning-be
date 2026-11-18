@@ -1,5 +1,13 @@
 node_modules
 dist
+coverage
 .git
 .env
-npm-debug.log
+.env.*
+deploy/**/.env
+deploy/**/.env.*
+*.log
+*.tsbuildinfo
+.vscode
+test
+README.md
