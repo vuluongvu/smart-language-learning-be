@@ -122,3 +122,66 @@ export class SaveUnitWordsDto {
   @Type(() => UnitNotebookWordDto)
   words: UnitNotebookWordDto[];
 }
+
+export class GenerateAiLearningPathDto {
+  @ApiProperty({ maxLength: 220 })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(220)
+  goalTopic: string;
+
+  @ApiPropertyOptional({ maxLength: 4000 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  sourceMaterial?: string;
+
+  @ApiPropertyOptional({ enum: LEARNING_GOAL_BANDS })
+  @IsOptional()
+  @IsIn(LEARNING_GOAL_BANDS)
+  targetBand?: LearningGoalBand;
+
+  @ApiPropertyOptional({ enum: CEFR_GOAL_LEVELS })
+  @IsOptional()
+  @IsIn(CEFR_GOAL_LEVELS)
+  currentLevel?: string;
+
+  @ApiPropertyOptional({ minimum: 2, maximum: 4, default: 3 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(2)
+  @Max(4)
+  unitCount?: number;
+
+  @ApiPropertyOptional({ enum: ['vi', 'en'], default: 'vi' })
+  @IsOptional()
+  @IsIn(['vi', 'en'])
+  explanationLang?: 'vi' | 'en';
+}
+
+export class GenerateUnitStudyGuideDto {
+  @ApiPropertyOptional({ maxLength: 1500 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1500)
+  focusNote?: string;
+
+  @ApiPropertyOptional({ enum: ['vi', 'en'], default: 'vi' })
+  @IsOptional()
+  @IsIn(['vi', 'en'])
+  explanationLang?: 'vi' | 'en';
+}
+
+export class RegenerateAiUnitDto {
+  @ApiPropertyOptional({ maxLength: 1500 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1500)
+  focusNote?: string;
+
+  @ApiPropertyOptional({ enum: ['vi', 'en'], default: 'vi' })
+  @IsOptional()
+  @IsIn(['vi', 'en'])
+  explanationLang?: 'vi' | 'en';
+}

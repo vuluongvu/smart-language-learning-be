@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -13,6 +14,9 @@ import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
 import {
   EvaluateUnitWritingDto,
+  GenerateAiLearningPathDto,
+  GenerateUnitStudyGuideDto,
+  RegenerateAiUnitDto,
   SaveUnitWordsDto,
   StartUnitSpeakingDto,
   SubmitUnitQuizDto,
@@ -137,6 +141,63 @@ export class LearningPathController {
     @Body() dto: SaveUnitWordsDto,
   ) {
     return this.learningPathService.saveWordsToUnitNotebook(
+      userId,
+      unitId,
+      dto,
+    );
+  }
+
+  @Post('ai/generate')
+  @Throttle({ default: { limit: 6, ttl: 60_000 } })
+  @ApiOperation({
+    summary:
+      'Generate a personalized multi-unit learning path + full study materials from a goal or raw notes using AI',
+  })
+  generateAiPath(
+    @CurrentUser('userId') userId: number,
+    @Body() dto: GenerateAiLearningPathDto,
+  ) {
+    return this.learningPathService.generateAiLearningPath(userId, dto);
+  }
+
+  @Delete('ai-tracks/:trackId')
+  @ApiOperation({
+    summary:
+      'Delete an AI-generated personal learning path owned by the learner',
+  })
+  deleteAiTrack(
+    @CurrentUser('userId') userId: number,
+    @Param('trackId', ParseIntPipe) trackId: number,
+  ) {
+    return this.learningPathService.deleteAiTrack(userId, trackId);
+  }
+
+  @Post('units/:id/ai/study-guide')
+  @Throttle({ default: { limit: 15, ttl: 60_000 } })
+  @ApiOperation({
+    summary:
+      'Generate or customize an AI study guide (grammar rules, sentence patterns, common mistakes) for any unit',
+  })
+  generateUnitStudyGuide(
+    @CurrentUser('userId') userId: number,
+    @Param('id', ParseIntPipe) unitId: number,
+    @Body() dto: GenerateUnitStudyGuideDto,
+  ) {
+    return this.learningPathService.generateUnitStudyGuide(userId, unitId, dto);
+  }
+
+  @Post('units/:id/ai/regenerate')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({
+    summary:
+      'Regenerate all AI study materials and 4-skill exercises for a custom AI unit',
+  })
+  regenerateAiUnit(
+    @CurrentUser('userId') userId: number,
+    @Param('id', ParseIntPipe) unitId: number,
+    @Body() dto: RegenerateAiUnitDto,
+  ) {
+    return this.learningPathService.regenerateAiUnitMaterials(
       userId,
       unitId,
       dto,
