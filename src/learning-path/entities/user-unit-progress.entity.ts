@@ -8,7 +8,10 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity.js';
-import { LearningPathUnit } from './learning-path-unit.entity.js';
+import {
+  LearningPathUnit,
+  UnitStudyGuide,
+} from './learning-path-unit.entity.js';
 
 export interface UnitWritingError {
   original: string;
@@ -79,6 +82,9 @@ export class UserUnitProgress {
 
   @Column({ name: 'topic_id', type: 'int', nullable: true })
   topicId: number | null;
+
+  @Column({ name: 'ai_study_guide_json', type: 'json', nullable: true })
+  aiStudyGuideJson: UnitStudyGuide | null;
 
   @Column({
     name: 'completed_at',

@@ -39,6 +39,32 @@ export interface UnitWritingPrompt {
   sampleAnswer: string;
 }
 
+export interface UnitStudyGrammarPoint {
+  title: string;
+  explanation: string;
+  example: string;
+}
+
+export interface UnitStudyKeyPattern {
+  pattern: string;
+  meaning: string;
+  example: string;
+}
+
+export interface UnitStudyMistake {
+  mistake: string;
+  correction: string;
+  tip: string;
+}
+
+export interface UnitStudyGuide {
+  overview: string;
+  grammarPoints: UnitStudyGrammarPoint[];
+  keyPatterns: UnitStudyKeyPattern[];
+  commonMistakes: UnitStudyMistake[];
+  studyTips: string[];
+}
+
 @Entity({ name: 'learning_path_units' })
 export class LearningPathUnit {
   @PrimaryGeneratedColumn()
@@ -83,6 +109,9 @@ export class LearningPathUnit {
 
   @Column({ name: 'speaking_topic_prompt', type: 'varchar', length: 255 })
   speakingTopicPrompt: string;
+
+  @Column({ name: 'study_guide_json', type: 'json', nullable: true })
+  studyGuideJson: UnitStudyGuide | null;
 
   @Column({ name: 'sort_order', type: 'int', default: 0 })
   sortOrder: number;

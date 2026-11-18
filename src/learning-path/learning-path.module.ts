@@ -11,6 +11,7 @@ import { LearningPathPart } from './entities/learning-path-part.entity.js';
 import { LearningPathTrack } from './entities/learning-path-track.entity.js';
 import { LearningPathUnit } from './entities/learning-path-unit.entity.js';
 import { UserUnitProgress } from './entities/user-unit-progress.entity.js';
+import { LearningPathAiService } from './learning-path-ai.service.js';
 import { LearningPathCatalogService } from './learning-path-catalog.service.js';
 import { LearningPathController } from './learning-path.controller.js';
 import { LearningPathService } from './learning-path.service.js';
@@ -32,7 +33,11 @@ import { LearningPathService } from './learning-path.service.js';
     VocabularyModule,
   ],
   controllers: [LearningPathController],
-  providers: [LearningPathCatalogService, LearningPathService],
+  providers: [
+    LearningPathCatalogService,
+    LearningPathAiService,
+    LearningPathService,
+  ],
   exports: [LearningPathService],
 })
 export class LearningPathModule {}

@@ -48,12 +48,16 @@ export class LearningPathCatalogService implements OnModuleInit {
             cefrLevel: trackSpec.cefrLevel,
             languageCode: trackSpec.languageCode,
             summary: trackSpec.summary,
+            ownerUserId: null,
+            isAiGenerated: false,
             sortOrder: tIdx + 1,
           });
         } else {
           track.title = trackSpec.title;
           track.cefrLevel = trackSpec.cefrLevel;
           track.summary = trackSpec.summary;
+          track.ownerUserId = null;
+          track.isAiGenerated = false;
           track.sortOrder = tIdx + 1;
         }
         track = await tRepo.save(track);
