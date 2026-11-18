@@ -42,6 +42,29 @@ export class User {
   })
   isLeaderboardVisible: boolean;
 
+  @Column({
+    name: 'learning_goal_band',
+    type: 'varchar',
+    length: 32,
+    default: 'band_45_55',
+  })
+  learningGoalBand: string;
+
+  @Column({
+    name: 'current_level',
+    type: 'varchar',
+    length: 16,
+    default: 'B1',
+  })
+  currentLevel: string;
+
+  @Column({
+    name: 'daily_goal_minutes',
+    type: 'int',
+    default: 15,
+  })
+  dailyGoalMinutes: number;
+
   @Column({ type: 'enum', enum: Role, default: Role.USER })
   role: Role;
 

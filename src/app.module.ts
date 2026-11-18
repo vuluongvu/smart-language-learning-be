@@ -14,6 +14,7 @@ import { StreaksModule } from './streaks/streaks.module.js';
 import { ProgressModule } from './progress/progress.module.js';
 import { LeaderboardModule } from './leaderboard/leaderboard.module.js';
 import { AiModule } from './ai/ai.module.js';
+import { LearningPathModule } from './learning-path/learning-path.module.js';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor.js';
 import { AllExceptionsFilter } from './common/exception-filters/all-exceptions-filter.filter.js';
 import { RequestMiddleware } from './common/middleware/request-id.middleware.js';
@@ -111,6 +112,7 @@ import Joi from 'joi';
     ProgressModule,
     LeaderboardModule,
     AiModule,
+    LearningPathModule,
   ],
   controllers: [AppController],
   providers: [

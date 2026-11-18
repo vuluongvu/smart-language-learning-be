@@ -12,6 +12,6 @@ import { AiConversationTurn } from './entities/ai-conversation-turn.entity.js';
   ],
   controllers: [AiController],
   providers: [AiService, AiConversationService],
-  exports: [AiService],
+  exports: [AiService, AiConversationService],
 })
 export class AiModule {}
