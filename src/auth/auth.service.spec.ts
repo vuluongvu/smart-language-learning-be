@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   NotFoundException,
   ServiceUnavailableException,
@@ -33,11 +34,15 @@ describe('AuthService', () => {
     signAsync: ReturnType<typeof vi.fn>;
     verifyAsync: ReturnType<typeof vi.fn>;
   };
-  let googleTokenVerifier: { verifyIdToken: ReturnType<typeof vi.fn> };
+  let googleTokenVerifier: {
+    getClientConfig: ReturnType<typeof vi.fn>;
+    verifyIdToken: ReturnType<typeof vi.fn>;
+  };
   let authProviderRepo: {
     findOne: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
     save: ReturnType<typeof vi.fn>;
+    delete: ReturnType<typeof vi.fn>;
   };
   let refreshSessionRepo: {
     create: ReturnType<typeof vi.fn>;
@@ -78,12 +83,17 @@ describe('AuthService', () => {
       verifyAsync: vi.fn(),
     };
     googleTokenVerifier = {
+      getClientConfig: vi.fn().mockReturnValue({
+        enabled: true,
+        clientId: 'test-client.apps.googleusercontent.com',
+      }),
       verifyIdToken: vi.fn(),
     };
     authProviderRepo = {
       findOne: vi.fn(),
       create: vi.fn((x) => x),
       save: vi.fn(async (x) => x),
+      delete: vi.fn(async () => ({ affected: 1 })),
     };
     refreshSessionRepo = {
       create: vi.fn((x) => x),
@@ -290,5 +300,60 @@ describe('AuthService', () => {
     await expect(service.googleLogin({ idToken: 'token' })).rejects.toThrow(
       NotFoundException,
     );
+  });
+
+  it('returns public Google config, links Google account, and enforces password check on unlink', async () => {
+    expect(service.getGoogleConfig()).toEqual({
+      enabled: true,
+      clientId: 'test-client.apps.googleusercontent.com',
+    });
+
+    googleTokenVerifier.verifyIdToken.mockResolvedValue({
+      sub: 'google-sub-55',
+      email: 'learner@example.com',
+      emailVerified: true,
+      displayName: 'Learner',
+      avatarUrl: null,
+    });
+    authProviderRepo.findOne.mockResolvedValue(null);
+    usersService.getMyProfile.mockResolvedValue({
+      ...baseProfile,
+      linkedProviders: ['local', 'google'],
+    });
+
+    const linked = await service.linkGoogleAccount(1, {
+      idToken: 'good-token',
+    });
+    expect(linked.linkedProviders).toEqual(['local', 'google']);
+    expect(authProviderRepo.save).toHaveBeenCalledTimes(1);
+
+    // Block unlinking if user has no password
+    usersService.getMyProfile.mockResolvedValueOnce({
+      ...baseProfile,
+      hasPassword: false,
+      linkedProviders: ['google'],
+    });
+    await expect(service.unlinkGoogleAccount(1)).rejects.toThrow(
+      BadRequestException,
+    );
+
+    // Allow unlinking when user has password
+    usersService.getMyProfile
+      .mockResolvedValueOnce({
+        ...baseProfile,
+        hasPassword: true,
+        linkedProviders: ['local', 'google'],
+      })
+      .mockResolvedValueOnce({
+        ...baseProfile,
+        hasPassword: true,
+        linkedProviders: ['local'],
+      });
+    const unlinked = await service.unlinkGoogleAccount(1);
+    expect(unlinked.linkedProviders).toEqual(['local']);
+    expect(authProviderRepo.delete).toHaveBeenCalledWith({
+      userId: 1,
+      provider: 'google',
+    });
   });
 });

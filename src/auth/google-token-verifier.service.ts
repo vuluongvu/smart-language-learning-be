@@ -20,6 +20,14 @@ export class GoogleTokenVerifierService {
 
   constructor(private readonly configService: ConfigService) {}
 
+  getClientConfig(): { enabled: boolean; clientId: string | null } {
+    const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID')?.trim();
+    return {
+      enabled: Boolean(clientId),
+      clientId: clientId || null,
+    };
+  }
+
   async verifyIdToken(idToken: string): Promise<VerifiedGoogleProfile> {
     const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID')?.trim();
     if (!clientId) {
