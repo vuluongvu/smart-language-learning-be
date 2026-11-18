@@ -48,6 +48,15 @@ export class AuthController {
   }
 
   @Public()
+  @Get('google/config')
+  @ApiOperation({
+    summary: 'Get public Google OAuth client configuration for web sign-in',
+  })
+  getGoogleConfig() {
+    return this.authService.getGoogleConfig();
+  }
+
+  @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @Post('google')
@@ -65,6 +74,17 @@ export class AuthController {
     @Body() dto: GoogleAuthDto,
   ) {
     return this.authService.linkGoogleAccount(userId, dto);
+  }
+
+  @ApiBearerAuth()
+  @Post('google/unlink')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Unlink Google account from the authenticated user (requires a password set)',
+  })
+  unlinkGoogle(@CurrentUser('userId') userId: number) {
+    return this.authService.unlinkGoogleAccount(userId);
   }
 
   @Public()
