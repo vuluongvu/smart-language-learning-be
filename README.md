@@ -161,3 +161,9 @@ Core vocabulary, flashcard SM-2 scheduling, and quiz drafting work completely of
      ```bash
      docker compose exec app node dist/database/seed.js
      ```
+
+---
+
+## Deploying Staging / Trial to AWS (Paired with Vercel Frontend)
+
+See [deploy/aws/README.md](deploy/aws/README.md) for EC2 + Caddy auto-HTTPS (`compose.aws.yaml`), Amazon RDS (`DB_SSL=true`), App Runner / ECS ECR image deployment, and Vercel `CORS_ORIGIN` setup.

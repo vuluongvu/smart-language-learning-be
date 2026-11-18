@@ -23,6 +23,7 @@ import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard.js';
 import { RolesGuard } from './auth/guards/roles.guard.js';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor.js';
+import { resolveMysqlSslConfig } from './common/utils/db-ssl.util.js';
 import Joi from 'joi';
 
 @Module({
@@ -43,6 +44,8 @@ import Joi from 'joi';
         DB_PASSWORD: Joi.string().allow('').required(),
         DB_NAME: Joi.string().required(),
         DB_SYNCHRONIZE: Joi.boolean().default(false),
+        DB_SSL: Joi.boolean().default(false),
+        DB_SSL_REJECT_UNAUTHORIZED: Joi.boolean().default(true),
         JWT_SECRET: Joi.string().min(32).required(),
         JWT_EXPIRATION: Joi.string().default('15m'),
         JWT_REFRESH_SECRET: Joi.string().min(32).allow('').optional(),
@@ -87,6 +90,10 @@ import Joi from 'joi';
         const isProduction =
           configService.get<string>('NODE_ENV') === 'production';
         const allowSync = configService.get<boolean>('DB_SYNCHRONIZE') === true;
+        const ssl = resolveMysqlSslConfig(
+          configService.get<boolean>('DB_SSL'),
+          configService.get<boolean>('DB_SSL_REJECT_UNAUTHORIZED'),
+        );
 
         return {
           type: 'mysql',
@@ -98,6 +105,7 @@ import Joi from 'joi';
           autoLoadEntities: true,
           synchronize: !isProduction && allowSync,
           timezone: 'Z',
+          ...(ssl ? { ssl } : {}),
         };
       },
     }),
