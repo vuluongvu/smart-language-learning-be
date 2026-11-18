@@ -1,7 +1,7 @@
 services:
   app:
     build: .
-    container_name: openquiz-app
+    container_name: argon-learning-app
     command:
       - sh
       - -c
@@ -46,7 +46,7 @@ services:
 
   mysql:
     image: mysql:8.4
-    container_name: openquiz-mysql
+    container_name: argon-learning-mysql
     ports:
       - '3311:3306'
     environment:
@@ -55,7 +55,7 @@ services:
       MYSQL_USER: ${DB_USERNAME}
       MYSQL_PASSWORD: ${DB_PASSWORD}
     volumes:
-      - openquiz_mysql_data:/var/lib/mysql
+      - argon_learning_mysql_data:/var/lib/mysql
     healthcheck:
       test:
         - CMD-SHELL
@@ -66,8 +66,8 @@ services:
     restart: unless-stopped
 
 volumes:
-  openquiz_mysql_data:
+  argon_learning_mysql_data:
 
 networks:
   default:
-    name: openquiz-network
+    name: argon-learning-network

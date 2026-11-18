@@ -1,6 +1,6 @@
-# OpenQuiz Backend (`smart-language-learning-be`)
+# Argon Learning Backend (`smart-language-learning-be`)
 
-Backend REST API for the **OpenQuiz** personalized English self-learning platform MVP, built with **NestJS + TypeScript (ESM) + MySQL 8.4 + TypeORM**.
+Backend REST API for the **Argon Learning** personalized English self-learning platform MVP, built with **NestJS + TypeScript (ESM) + MySQL 8.4 + TypeORM**.
 
 ---
 
@@ -71,7 +71,7 @@ Backend REST API for the **OpenQuiz** personalized English self-learning platfor
    ```
 
    Creates demo learner credentials:
-   - Email: `demo@openquiz.local`
+   - Email: `demo@argonlearning.local`
    - Password: `DemoPassword123!`
 
 6. **Start the API server**
@@ -147,7 +147,7 @@ Core vocabulary, flashcard SM-2 scheduling, and quiz drafting work completely of
 ## Running Backend + MySQL in Docker
 
 1. Ensure `.env` exists (copied from `.env.example` with strong `JWT_SECRET` / `JWT_REFRESH_SECRET` and DB credentials).
-2. Start MySQL and Backend together on the shared `openquiz-network` bridge:
+2. Start MySQL and Backend together on the shared `argon-learning-network` bridge:
 
    ```bash
    docker compose up -d --build
@@ -155,7 +155,7 @@ Core vocabulary, flashcard SM-2 scheduling, and quiz drafting work completely of
 
    - Automatically applies pending TypeORM migrations before starting `dist/main.js`.
    - Backend API: `http://localhost:3001/api/v1` (Health: `http://localhost:3001/api/v1/health`)
-   - MySQL (`openquiz-mysql`): `127.0.0.1:3311`
+   - MySQL (`argon-learning-mysql`): `127.0.0.1:3311`
    - Optional (dev only): seed sample demo data inside the running container:
 
      ```bash
