@@ -22,6 +22,9 @@ export interface UserProfileView {
   avatarUrl: string | null;
   timezone: string;
   isLeaderboardVisible: boolean;
+  learningGoalBand?: string;
+  currentLevel?: string;
+  dailyGoalMinutes?: number;
   role: string;
   hasPassword: boolean;
   linkedProviders: string[];
@@ -104,6 +107,9 @@ export class UsersService {
       avatarUrl: user.avatarUrl,
       timezone: user.timezone,
       isLeaderboardVisible: user.isLeaderboardVisible,
+      learningGoalBand: user.learningGoalBand ?? 'band_45_55',
+      currentLevel: user.currentLevel ?? 'B1',
+      dailyGoalMinutes: user.dailyGoalMinutes ?? 15,
       role: user.role,
       hasPassword: Boolean(user.passwordHash),
       linkedProviders: providers.map((p) => p.provider),
