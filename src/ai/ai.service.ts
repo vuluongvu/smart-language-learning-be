@@ -11,15 +11,23 @@ import { ConfigService } from '@nestjs/config';
 
 export type AiRole = 'system' | 'user' | 'assistant';
 
+export type AiMessageContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
+export type AiMessageContent = string | AiMessageContentPart[];
+
 export interface AiMessage {
   role: AiRole;
-  content: string;
+  content: AiMessageContent;
 }
 
 export interface AiChatOptions {
   temperature?: number;
   maxTokens?: number;
   jsonMode?: boolean;
+  vision?: boolean;
+  timeoutMs?: number;
 }
 
 export interface AiTokenUsage {
@@ -45,6 +53,7 @@ interface GroqChatResponse {
 }
 
 export const DEFAULT_GROQ_MODEL = 'qwen/qwen3.8-27b';
+export const DEFAULT_GROQ_VISION_MODEL = 'qwen/qwen3.8-27b';
 export const DEFAULT_GROQ_FALLBACK_MODELS = [
   'openai/gpt-oss-120b',
   'openai/gpt-oss-20b',
@@ -69,6 +78,7 @@ export interface AiTranscribeResult {
 }
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const VISION_REQUEST_TIMEOUT_MS = 60_000;
 
 @Injectable()
 export class AiService {
@@ -88,10 +98,31 @@ export class AiService {
     return this.configService.get<string>('GROQ_MODEL') || DEFAULT_GROQ_MODEL;
   }
 
+  get visionModel(): string {
+    return (
+      this.configService.get<string>('GROQ_VISION_MODEL')?.trim() ||
+      DEFAULT_GROQ_VISION_MODEL
+    );
+  }
+
   /**
-   * Ordered priority pool of chat models starting with GROQ_MODEL followed by configured fallbacks.
+   * Ordered priority pool of chat models starting with primary model followed by configured fallbacks.
    */
-  getCandidateModels(): string[] {
+  getCandidateModels(vision = false): string[] {
+    if (vision) {
+      const rawVisionFallbacks = this.configService
+        .get<string>('GROQ_VISION_FALLBACK_MODELS')
+        ?.trim();
+      const visionFallbacks =
+        !rawVisionFallbacks || rawVisionFallbacks.toLowerCase() === 'none'
+          ? []
+          : rawVisionFallbacks
+              .split(',')
+              .map((m) => m.trim())
+              .filter(Boolean);
+      return Array.from(new Set([this.visionModel, ...visionFallbacks]));
+    }
+
     const rawFallbacks = this.configService
       .get<string>('GROQ_FALLBACK_MODELS')
       ?.trim();
@@ -111,7 +142,10 @@ export class AiService {
    * Compute currently eligible models (skipping models in active rate-limit cooldown)
    * and minimum wait seconds if every candidate model is temporarily limited.
    */
-  selectAvailableModels(now = Date.now()): {
+  selectAvailableModels(
+    now = Date.now(),
+    vision = false,
+  ): {
     available: string[];
     retryAfterSeconds: number;
   } {
@@ -121,7 +155,7 @@ export class AiService {
       }
     }
 
-    const candidates = this.getCandidateModels();
+    const candidates = this.getCandidateModels(vision);
     const available = candidates.filter((m) => !this.modelCooldowns.has(m));
     if (available.length > 0) {
       return { available, retryAfterSeconds: 0 };
@@ -151,8 +185,9 @@ export class AiService {
     const baseUrl =
       this.configService.get<string>('GROQ_BASE_URL') || DEFAULT_GROQ_BASE_URL;
     const apiKey = this.configService.getOrThrow<string>('GROQ_API_KEY');
+    const isVision = Boolean(options.vision);
 
-    const selection = this.selectAvailableModels();
+    const selection = this.selectAvailableModels(Date.now(), isVision);
     if (selection.available.length === 0) {
       throw new HttpException(
         `AI rate limit reached across all configured models. Please wait about ${selection.retryAfterSeconds}s and try again.`,
@@ -195,7 +230,7 @@ export class AiService {
         if (idx < selection.available.length - 1) {
           continue;
         }
-        const postExhaust = this.selectAvailableModels();
+        const postExhaust = this.selectAvailableModels(Date.now(), isVision);
         await this.throwProviderError(
           'Groq API error',
           'AI provider returned an error',
@@ -221,6 +256,9 @@ export class AiService {
     messages: AiMessage[],
     options: AiChatOptions,
   ): Promise<Response> {
+    const timeoutMs =
+      options.timeoutMs ??
+      (options.vision ? VISION_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
     try {
       return await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
@@ -237,7 +275,7 @@ export class AiService {
             ? { response_format: { type: 'json_object' } }
             : {}),
         }),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
       this.logger.error(`Groq request failed: ${(error as Error).message}`);
@@ -398,6 +436,15 @@ export class AiService {
       throw new HttpException(
         `AI rate limit reached. Please wait ${waitHint} and try again.`,
         HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    if (
+      response.status === HttpStatus.BAD_REQUEST &&
+      detail.toLowerCase().includes('image')
+    ) {
+      throw new BadRequestException(
+        'Unable to read the uploaded image. Please use a clear PNG, JPEG, WebP, or GIF image.',
       );
     }
 

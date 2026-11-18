@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -18,6 +18,9 @@ import { CreateVocabularyDto } from './create-vocabulary.dto.js';
 
 export type AiGenerateMode = 'topic' | 'passage';
 export type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
+
+const emptyToUndefined = ({ value }: { value: unknown }) =>
+  typeof value === 'string' && value.trim() === '' ? undefined : value;
 
 export class AiEnrichVocabularyDto {
   @ApiProperty({ example: 'resilient' })
@@ -63,6 +66,40 @@ export class AiGenerateVocabularyDto {
   count?: number;
 
   @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  topicId?: number;
+}
+
+export class AiExtractImageVocabularyDto {
+  @ApiPropertyOptional({
+    example: 'Focus on academic adjectives and phrasal verbs',
+  })
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  prompt?: string;
+
+  @ApiPropertyOptional({ enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] })
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsIn(['A1', 'A2', 'B1', 'B2', 'C1', 'C2'])
+  level?: CefrLevel;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 15, default: 8 })
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(15)
+  count?: number;
+
+  @ApiPropertyOptional({ example: 1 })
+  @Transform(emptyToUndefined)
   @IsOptional()
   @Type(() => Number)
   @IsInt()

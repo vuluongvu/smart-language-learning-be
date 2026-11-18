@@ -55,9 +55,11 @@ import Joi from 'joi';
         AI_PROVIDER: Joi.string().valid('none', 'groq').default('none'),
         GROQ_API_KEY: Joi.string().allow('').optional(),
         GROQ_MODEL: Joi.string().default('qwen/qwen3.8-27b'),
+        GROQ_VISION_MODEL: Joi.string().allow('').optional(),
         GROQ_FALLBACK_MODELS: Joi.string()
           .allow('')
           .default('openai/gpt-oss-120b,openai/gpt-oss-20b'),
+        GROQ_VISION_FALLBACK_MODELS: Joi.string().allow('').optional(),
         GROQ_BASE_URL: Joi.string()
           .uri()
           .default('https://api.groq.com/openai/v1'),

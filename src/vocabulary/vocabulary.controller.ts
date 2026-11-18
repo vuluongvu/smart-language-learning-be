@@ -8,19 +8,32 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import {
+  ApiBearerAuth,
+  ApiConsumes,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
 import {
   AiEnrichVocabularyDto,
+  AiExtractImageVocabularyDto,
   AiGenerateVocabularyDto,
   BulkCreateVocabularyDto,
 } from './dto/ai-vocabulary.dto.js';
 import { CreateVocabularyDto } from './dto/create-vocabulary.dto.js';
 import { UpdateVocabularyDto } from './dto/update-vocabulary.dto.js';
 import { VocabularyQueryDto } from './dto/vocabulary-query.dto.js';
-import { VocabularyAiService } from './vocabulary-ai.service.js';
+import {
+  MAX_VOCAB_IMAGE_BYTES,
+  type UploadedImageInput,
+  VocabularyAiService,
+} from './vocabulary-ai.service.js';
 import { VocabularyService } from './vocabulary.service.js';
 
 @ApiTags('Vocabulary')
@@ -96,6 +109,26 @@ export class VocabularyController {
     @Body() dto: AiGenerateVocabularyDto,
   ) {
     return this.vocabularyAiService.generateBatch(userId, dto);
+  }
+
+  @Post('ai/extract-image')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @UseInterceptors(
+    FileInterceptor('image', {
+      limits: { fileSize: MAX_VOCAB_IMAGE_BYTES },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary:
+      'Upload an image and extract English vocabulary drafts via AI vision',
+  })
+  extractFromImage(
+    @CurrentUser('userId') userId: number,
+    @UploadedFile() file: UploadedImageInput | undefined,
+    @Body() dto: AiExtractImageVocabularyDto,
+  ) {
+    return this.vocabularyAiService.extractFromImage(userId, file, dto);
   }
 
   @Get(':id')
