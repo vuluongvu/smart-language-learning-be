@@ -606,6 +606,7 @@ describe('LearningPathService', () => {
 
     const overview = await service.generateAiLearningPath(7, {
       goalTopic: 'Backend Job Interviews',
+      learningFocus: 'Focus on spoken confidence and architecture terms',
       targetBand: 'band_55_65',
       currentLevel: 'B1',
       unitCount: 2,
@@ -661,7 +662,7 @@ describe('LearningPathService', () => {
     });
 
     const customGuide = await service.generateUnitStudyGuide(7, 101, {
-      focusNote: 'Tập trung miêu tả ban công và tiện nghi',
+      focusGoal: 'Emphasize practical apartment descriptions',
       explanationLang: 'vi',
     });
     expect(customGuide.studyGuide.overview).toBe(
