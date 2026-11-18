@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -86,6 +87,10 @@ export class AuthService {
     }
 
     return this.issueSessionTokens(user);
+  }
+
+  getGoogleConfig(): { enabled: boolean; clientId: string | null } {
+    return this.googleTokenVerifier.getClientConfig();
   }
 
   async googleLogin(dto: GoogleAuthDto): Promise<AuthTokenResponse> {
@@ -184,6 +189,35 @@ export class AuthService {
     const updatedProfile = await this.usersService.getMyProfile(userId);
     return {
       message: 'Google account linked successfully',
+      linkedProviders: updatedProfile.linkedProviders,
+    };
+  }
+
+  async unlinkGoogleAccount(
+    userId: number,
+  ): Promise<{ message: string; linkedProviders: string[] }> {
+    const currentProfile = await this.usersService.getMyProfile(userId);
+    if (!currentProfile.linkedProviders.includes('google')) {
+      return {
+        message: 'Google account is not linked',
+        linkedProviders: currentProfile.linkedProviders,
+      };
+    }
+
+    if (!currentProfile.hasPassword) {
+      throw new BadRequestException(
+        'Please set a password before unlinking your Google account.',
+      );
+    }
+
+    await this.authProviderRepository.delete({
+      userId,
+      provider: 'google',
+    });
+
+    const updatedProfile = await this.usersService.getMyProfile(userId);
+    return {
+      message: 'Google account unlinked successfully',
       linkedProviders: updatedProfile.linkedProviders,
     };
   }
