@@ -1,4 +1,4 @@
-# OpenQuiz Backend Rules
+# Argon Learning Backend Rules
 
 ## Git & GitHub Workflow (Per Feature / Branch)
 

@@ -49,7 +49,7 @@ async function seedDevelopmentData(): Promise<void> {
       }
 
       const userRepo = manager.getRepository(User);
-      const demoEmail = 'demo@openquiz.local';
+      const demoEmail = 'demo@argonlearning.local';
       const existingDemo = await userRepo.findOne({
         where: { email: demoEmail },
       });
@@ -71,7 +71,7 @@ async function seedDevelopmentData(): Promise<void> {
         }),
       );
 
-      const peerEmail = 'peer.alex@openquiz.local';
+      const peerEmail = 'peer.alex@argonlearning.local';
       let peerUser = await userRepo.findOne({ where: { email: peerEmail } });
       if (!peerUser) {
         peerUser = await userRepo.save(
@@ -222,7 +222,7 @@ async function seedDevelopmentData(): Promise<void> {
           topicId: topicWork.id,
           title: 'Workplace Readiness Drill',
           description:
-            'Practice realistic vocabulary usage across all three OpenQuiz question formats.',
+            'Practice realistic vocabulary usage across all three Argon Learning question formats.',
           difficulty: QuizDifficulty.MEDIUM,
           status: QuizStatus.PUBLISHED,
         }),
@@ -368,7 +368,7 @@ async function seedDevelopmentData(): Promise<void> {
       ]);
 
       console.log(
-        `Seeded OpenQuiz dev dataset successfully (demo login: ${demoEmail} / DemoPassword123!).`,
+        `Seeded Argon Learning dev dataset successfully (demo login: ${demoEmail} / DemoPassword123!).`,
       );
     });
   } finally {

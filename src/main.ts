@@ -41,8 +41,8 @@ async function bootstrap() {
     process.env.ENABLE_SWAGGER === 'true';
   if (enableSwagger) {
     const config = new DocumentBuilder()
-      .setTitle('OpenQuiz API')
-      .setDescription('OpenQuiz English self-learning platform REST API')
+      .setTitle('Argon Learning API')
+      .setDescription('Argon Learning English self-learning platform REST API')
       .setVersion('1.0')
       .addBearerAuth()
       .build();
