@@ -205,49 +205,60 @@ export class LearningPathAiService {
         ? `\nAvoid repeating these words already covered in earlier units: ${params.avoidTerms.slice(0, 20).join(', ')}`
         : '';
 
-    const { data } = await this.aiService.chatJson<Record<string, unknown>>(
-      [
-        {
-          role: 'system',
-          content:
-            `Create complete English study materials + 4-skill exercises for ONE unit calibrated to ${bandLabel} (CEFR ${targetCefr}). Explanation language: ${explainLangName}.\n` +
-            `Return ONLY valid JSON with exact shape:\n` +
-            `{\n` +
-            `  "studyGuide": {\n` +
-            `    "overview": "concise Markdown/plain overview in ${explainLangName} (2-3 sentences)",\n` +
-            `    "grammarPoints": [{"title":"rule title in ${explainLangName}","explanation":"clear explanation in ${explainLangName}","example":"natural English sentence"}],\n` +
-            `    "keyPatterns": [{"pattern":"English sentence template","meaning":"meaning in ${explainLangName}","example":"English example"}],\n` +
-            `    "commonMistakes": [{"mistake":"common wrong English sentence","correction":"natural corrected version","tip":"why in ${explainLangName}"}],\n` +
-            `    "studyTips": ["short practical tip in ${explainLangName}"]\n` +
-            `  },\n` +
-            `  "vocabulary": [{"term":"word/phrase","pronunciation":"/IPA/","partOfSpeech":"noun|verb|adjective|adverb|phrase","definition":"${defLanguageRule}","example":"English sentence","notes":"usage note in ${explainLangName}"}],\n` +
-            `  "readingListening": {\n` +
-            `    "title": "short English passage title",\n` +
-            `    "audioScript": "natural 85-120 word English passage/dialogue using all unit vocabulary words",\n` +
-            `    "translation": "${explainLangName === 'Vietnamese' ? 'natural Vietnamese translation of audioScript' : 'concise English summary'}",\n` +
-            `    "questions": [{"prompt":"English comprehension question","options":["A","B","C","D"],"correctIndex":0,"explanation":"short explanation in ${explainLangName}"}]\n` +
-            `  },\n` +
-            `  "writing": {\n` +
-            `    "prompt": "clear writing task in ${explainLangName} telling learner what to write in English",\n` +
-            `    "minSentences": 4,\n` +
-            `    "targetTerms": ["term1","term2","term3"],\n` +
-            `    "sampleAnswer": "well-written 4-6 sentence English model paragraph at ${bandLabel}"\n` +
-            `  }\n` +
-            `}\n` +
-            `Rules: Provide 2 grammarPoints, 3 keyPatterns, 2 commonMistakes, 2 studyTips, 5 vocabulary items, and 3 MCQs each with exactly 4 options.`,
-        },
-        {
-          role: 'user',
-          content:
-            `Course goal: ${params.goalTopic}\n` +
-            `Unit ${params.unit.unitNumber}: ${params.unit.title}\n` +
-            `Topic: ${params.unit.topicName}\n` +
-            `Grammar focus: ${params.unit.grammarFocus}` +
-            `${avoidBlock}${focusBlock}`,
-        },
-      ],
-      { temperature: 0.45, maxTokens: 1550 },
-    );
+    const messages = [
+      {
+        role: 'system' as const,
+        content:
+          `Create complete English study materials + 4-skill exercises for ONE unit calibrated to ${bandLabel} (CEFR ${targetCefr}). Explanation language: ${explainLangName}.\n` +
+          `Return ONLY valid JSON with exact shape:\n` +
+          `{\n` +
+          `  "studyGuide": {\n` +
+          `    "overview": "concise Markdown/plain overview in ${explainLangName} (2-3 sentences)",\n` +
+          `    "grammarPoints": [{"title":"rule title in ${explainLangName}","explanation":"clear explanation in ${explainLangName}","example":"natural English sentence"}],\n` +
+          `    "keyPatterns": [{"pattern":"English sentence template","meaning":"meaning in ${explainLangName}","example":"English example"}],\n` +
+          `    "commonMistakes": [{"mistake":"common wrong English sentence","correction":"natural corrected version","tip":"why in ${explainLangName}"}],\n` +
+          `    "studyTips": ["short practical tip in ${explainLangName}"]\n` +
+          `  },\n` +
+          `  "vocabulary": [{"term":"word/phrase","pronunciation":"/IPA/","partOfSpeech":"noun|verb|adjective|adverb|phrase","definition":"${defLanguageRule}","example":"English sentence","notes":"usage note in ${explainLangName}"}],\n` +
+          `  "readingListening": {\n` +
+          `    "title": "short English passage title",\n` +
+          `    "audioScript": "natural 80-110 word English passage/dialogue using the unit vocabulary words",\n` +
+          `    "translation": "${explainLangName === 'Vietnamese' ? 'natural Vietnamese translation of audioScript' : 'concise English summary'}",\n` +
+          `    "questions": [{"prompt":"English comprehension question","options":["A","B","C","D"],"correctIndex":0,"explanation":"short explanation in ${explainLangName}"}]\n` +
+          `  },\n` +
+          `  "writing": {\n` +
+          `    "prompt": "clear writing task in ${explainLangName} telling learner what to write in English",\n` +
+          `    "minSentences": 4,\n` +
+          `    "targetTerms": ["term1","term2","term3"],\n` +
+          `    "sampleAnswer": "well-written 4-5 sentence English model paragraph at ${bandLabel}"\n` +
+          `  }\n` +
+          `}\n` +
+          `Rules: Provide 2 grammarPoints, 3 keyPatterns, 2 commonMistakes, 2 studyTips, 5 vocabulary items, and 3 MCQs each with 4 concise options.`,
+      },
+      {
+        role: 'user' as const,
+        content:
+          `Course goal: ${params.goalTopic}\n` +
+          `Unit ${params.unit.unitNumber}: ${params.unit.title}\n` +
+          `Topic: ${params.unit.topicName}\n` +
+          `Grammar focus: ${params.unit.grammarFocus}` +
+          `${avoidBlock}${focusBlock}`,
+      },
+    ];
+
+    let data: Record<string, unknown> = {};
+    try {
+      const response = await this.aiService.chatJson<Record<string, unknown>>(
+        messages,
+        { temperature: 0.4, maxTokens: 2600 },
+      );
+      data = response.data;
+    } catch {
+      const retryResponse = await this.aiService.chatJson<
+        Record<string, unknown>
+      >(messages, { temperature: 0.35, maxTokens: 2800 });
+      data = retryResponse.data;
+    }
 
     return this.sanitizeUnitStudyPack(
       data,
@@ -318,15 +329,20 @@ export class LearningPathAiService {
     bandLabel: string,
     lang: 'vi' | 'en',
   ): AiUnitStudyPack {
-    const vocabRaw = Array.isArray(raw.vocabulary) ? raw.vocabulary : [];
+    const vocabSource =
+      raw.vocabulary ?? raw.words ?? raw.vocab ?? raw.terms ?? [];
+    const vocabRaw = Array.isArray(vocabSource) ? vocabSource : [];
     const vocabulary: UnitVocabWord[] = [];
     const seenTerms = new Set<string>();
 
     for (const item of vocabRaw.slice(0, 8)) {
       if (!item || typeof item !== 'object') continue;
       const obj = item as Record<string, unknown>;
-      const term = this.cleanString(obj.term, 140);
-      const definition = this.cleanString(obj.definition, 400);
+      const term = this.cleanString(obj.term ?? obj.word ?? obj.phrase, 140);
+      const definition = this.cleanString(
+        obj.definition ?? obj.meaning ?? obj.translation,
+        400,
+      );
       if (!term || !definition) continue;
       const norm = term.toLowerCase();
       if (seenTerms.has(norm)) continue;
@@ -334,43 +350,84 @@ export class LearningPathAiService {
 
       vocabulary.push({
         term,
-        pronunciation: this.cleanString(obj.pronunciation, 80) ?? '',
+        pronunciation: this.cleanString(obj.pronunciation ?? obj.ipa, 80) ?? '',
         partOfSpeech:
-          this.cleanString(obj.partOfSpeech, 48)?.toLowerCase() ?? 'phrase',
+          this.cleanString(
+            obj.partOfSpeech ?? obj.pos ?? obj.type,
+            48,
+          )?.toLowerCase() ?? 'phrase',
         definition,
         example:
-          this.cleanString(obj.example, 400) ??
-          `Try using "${term}" in a complete sentence.`,
-        notes: this.cleanString(obj.notes, 300) ?? '',
+          this.cleanString(obj.example ?? obj.sentence, 400) ??
+          `In discussions on ${unit.topicName}, "${term}" helps express a precise point.`,
+        notes: this.cleanString(obj.notes ?? obj.note ?? obj.tip, 300) ?? '',
       });
     }
 
+    if (vocabulary.length < 4) {
+      const fallbackEntries = this.buildFallbackUnitVocabulary(unit, lang);
+      for (const entry of fallbackEntries) {
+        if (vocabulary.length >= 4) break;
+        const norm = entry.term.toLowerCase();
+        if (seenTerms.has(norm)) continue;
+        seenTerms.add(norm);
+        vocabulary.push(entry);
+      }
+    }
+
+    const rlCandidate =
+      raw.readingListening ??
+      raw.reading_listening ??
+      raw.reading ??
+      raw.passage;
     const rlRaw =
-      raw.readingListening && typeof raw.readingListening === 'object'
-        ? (raw.readingListening as Record<string, unknown>)
+      rlCandidate && typeof rlCandidate === 'object'
+        ? (rlCandidate as Record<string, unknown>)
         : {};
-    const audioScript = this.cleanString(rlRaw.audioScript, 2500);
-    const questionsRaw = Array.isArray(rlRaw.questions) ? rlRaw.questions : [];
+
+    const audioScript =
+      this.cleanString(
+        rlRaw.audioScript ??
+          rlRaw.audio_script ??
+          rlRaw.script ??
+          rlRaw.passage ??
+          rlRaw.text ??
+          raw.audioScript ??
+          raw.passage,
+        2500,
+      ) ?? this.buildFallbackAudioScript(unit, vocabulary);
+
+    const questionsCandidate =
+      rlRaw.questions ?? rlRaw.quiz ?? raw.questions ?? raw.quiz ?? [];
+    const questionsRaw = Array.isArray(questionsCandidate)
+      ? questionsCandidate
+      : [];
     const questions: UnitReadingQuizQuestion[] = [];
 
     for (let i = 0; i < Math.min(5, questionsRaw.length); i += 1) {
       const q = questionsRaw[i];
       if (!q || typeof q !== 'object') continue;
       const obj = q as Record<string, unknown>;
-      const prompt = this.cleanString(obj.prompt, 320);
-      const options = Array.isArray(obj.options)
-        ? obj.options
+      const prompt = this.cleanString(
+        obj.prompt ?? obj.question ?? obj.text,
+        320,
+      );
+      const rawOptions = obj.options ?? obj.choices ?? obj.answers;
+      const options = Array.isArray(rawOptions)
+        ? rawOptions
             .map((opt) => this.cleanString(opt, 220))
             .filter((opt): opt is string => Boolean(opt))
             .slice(0, 4)
         : [];
       if (!prompt || options.length < 2) continue;
-      const rawCorrect = Number(obj.correctIndex);
+      const rawCorrect = Number(
+        obj.correctIndex ?? obj.answerIndex ?? obj.correct,
+      );
       const correctIndex = Number.isInteger(rawCorrect)
         ? Math.max(0, Math.min(options.length - 1, rawCorrect))
         : 0;
       questions.push({
-        id: `q${i + 1}`,
+        id: `q${questions.length + 1}`,
         prompt,
         options,
         correctIndex,
@@ -379,15 +436,25 @@ export class LearningPathAiService {
       });
     }
 
-    if (vocabulary.length < 2 || !audioScript || questions.length === 0) {
-      throw new BadGatewayException(
-        `AI provider returned incomplete study materials for unit "${unit.title}"`,
+    if (questions.length < 2) {
+      const fallbackQuestions = this.buildFallbackReadingQuestions(
+        unit,
+        vocabulary,
+        lang,
       );
+      for (const fq of fallbackQuestions) {
+        if (questions.length >= 3) break;
+        questions.push({
+          ...fq,
+          id: `q${questions.length + 1}`,
+        });
+      }
     }
 
+    const writingCandidate = raw.writing ?? raw.writingTask ?? raw.writing_task;
     const writingRaw =
-      raw.writing && typeof raw.writing === 'object'
-        ? (raw.writing as Record<string, unknown>)
+      writingCandidate && typeof writingCandidate === 'object'
+        ? (writingCandidate as Record<string, unknown>)
         : {};
     const rawTargetTerms = Array.isArray(writingRaw.targetTerms)
       ? writingRaw.targetTerms
@@ -400,9 +467,11 @@ export class LearningPathAiService {
         ? rawTargetTerms
         : vocabulary.slice(0, 4).map((w) => w.term);
 
+    const studyGuideCandidate =
+      raw.studyGuide ?? raw.study_guide ?? raw.guide ?? raw;
     const studyGuideRaw =
-      raw.studyGuide && typeof raw.studyGuide === 'object'
-        ? (raw.studyGuide as Record<string, unknown>)
+      studyGuideCandidate && typeof studyGuideCandidate === 'object'
+        ? (studyGuideCandidate as Record<string, unknown>)
         : {};
     const studyGuide = this.sanitizeStudyGuide(
       studyGuideRaw,
@@ -424,13 +493,23 @@ export class LearningPathAiService {
         ? rawMinSentences
         : 4;
 
+    const translationText =
+      this.cleanString(
+        rlRaw.translation ??
+          rlRaw.vietnameseTranslation ??
+          rlRaw.vietnamese ??
+          rlRaw.summary ??
+          raw.translation,
+        2500,
+      ) ?? '';
+
     return {
       studyGuide,
       vocabulary,
       readingListening: {
         title: this.cleanString(rlRaw.title, 140) ?? unit.title,
         audioScript,
-        translation: this.cleanString(rlRaw.translation, 2500) ?? '',
+        translation: translationText,
         questions,
       },
       writing: {
@@ -439,9 +518,141 @@ export class LearningPathAiService {
         targetBand: bandLabel,
         targetTerms,
         sampleAnswer:
-          this.cleanString(writingRaw.sampleAnswer, 1400) ?? audioScript,
+          this.cleanString(
+            writingRaw.sampleAnswer ?? writingRaw.sample_answer,
+            1400,
+          ) ?? audioScript,
       },
     };
+  }
+
+  private buildFallbackUnitVocabulary(
+    unit: AiUnitOutlineItem,
+    lang: 'vi' | 'en',
+  ): UnitVocabWord[] {
+    const isVi = lang === 'vi';
+    return [
+      {
+        term: 'perspective',
+        pronunciation: '/pərˈspektɪv/',
+        partOfSpeech: 'noun',
+        definition: isVi
+          ? 'Góc nhìn, quan điểm cá nhân về một vấn đề'
+          : 'A particular attitude toward or way of regarding something',
+        example: `Exploring ${unit.topicName} from a new perspective strengthens your argument.`,
+        notes: isVi
+          ? 'Thường đi với "from my perspective" hoặc "a balanced perspective".'
+          : 'Often used in "from my perspective" or "a balanced perspective".',
+      },
+      {
+        term: 'articulate',
+        pronunciation: '/ɑːrˈtɪkjuleɪt/',
+        partOfSpeech: 'verb',
+        definition: isVi
+          ? 'Diễn đạt ý tưởng rõ ràng, mạch lạc'
+          : 'To express an idea or feeling fluently and coherently',
+        example: `Learners practice how to articulate ideas in "${unit.title}" using ${unit.grammarFocus}.`,
+        notes: isVi
+          ? 'Rất hữu ích trong Speaking và Writing học thuật.'
+          : 'Useful in both academic speaking and writing contexts.',
+      },
+      {
+        term: 'nuanced',
+        pronunciation: '/ˈnuːɑːnst/',
+        partOfSpeech: 'adjective',
+        definition: isVi
+          ? 'Tinh tế, có chiều sâu và phân biệt rõ các sắc thái'
+          : 'Characterized by subtle shades of meaning or expression',
+        example: `A nuanced discussion of ${unit.topicName} avoids oversimplified claims.`,
+        notes: isVi
+          ? 'Dùng để nâng cấp câu trả lời khi nêu ý kiến phức tạp.'
+          : 'Ideal for expressing balanced, high-band opinions.',
+      },
+      {
+        term: 'substantiate',
+        pronunciation: '/səbˈstænʃieɪt/',
+        partOfSpeech: 'verb',
+        definition: isVi
+          ? 'Chứng minh, đưa ra dẫn chứng cụ thể cho luận điểm'
+          : 'To provide evidence to support or prove the truth of a claim',
+        example: `Always substantiate your main point with a clear real-world example.`,
+        notes: isVi
+          ? 'Đi kèm với "substantiate a claim / argument".'
+          : 'Commonly paired with "substantiate a claim or argument".',
+      },
+    ];
+  }
+
+  private buildFallbackAudioScript(
+    unit: AiUnitOutlineItem,
+    vocabulary: UnitVocabWord[],
+  ): string {
+    const terms = vocabulary.slice(0, 4).map((v) => v.term);
+    const t0 = terms[0] ?? 'perspective';
+    const t1 = terms[1] ?? 'articulate';
+    const t2 = terms[2] ?? 'nuanced';
+    const t3 = terms[3] ?? 'substantiate';
+    return (
+      `In this unit on ${unit.title}, we explore how to discuss ${unit.topicName} with clarity and confidence. ` +
+      `When speakers share their ${t0}, they can use ${unit.grammarFocus} to ${t1} complex ideas naturally. ` +
+      `Rather than making one-sided statements, strong communicators build a ${t2} view and ${t3} each point with practical examples. ` +
+      `Consistent practice with these patterns makes everyday and academic conversations much more persuasive.`
+    );
+  }
+
+  private buildFallbackReadingQuestions(
+    unit: AiUnitOutlineItem,
+    vocabulary: UnitVocabWord[],
+    lang: 'vi' | 'en',
+  ): UnitReadingQuizQuestion[] {
+    const firstWord = vocabulary[0] ?? {
+      term: 'perspective',
+      definition:
+        lang === 'vi'
+          ? 'Góc nhìn, quan điểm cá nhân về một vấn đề'
+          : 'A particular way of regarding a topic',
+    };
+    const secondWord = vocabulary[1] ?? {
+      term: 'articulate',
+      definition:
+        lang === 'vi'
+          ? 'Diễn đạt ý tưởng rõ ràng, mạch lạc'
+          : 'To express ideas clearly and effectively',
+    };
+
+    return [
+      {
+        id: 'q1',
+        prompt: `What is the primary focus of the passage in "${unit.title}"?`,
+        options: [
+          `Communicating effectively about ${unit.topicName} using ${unit.grammarFocus}`,
+          'Memorizing isolated word lists without context',
+          'Avoiding examples when presenting an opinion',
+          'Replacing all grammar rules with informal slang',
+        ],
+        correctIndex: 0,
+        explanation:
+          lang === 'vi'
+            ? `Bài đọc tập trung vào cách vận dụng ${unit.grammarFocus} trong chủ đề ${unit.topicName}.`
+            : `The passage focuses on applying ${unit.grammarFocus} to ${unit.topicName}.`,
+      },
+      {
+        id: 'q2',
+        prompt: `Which meaning best matches the key term "${firstWord.term}" in this unit?`,
+        options: [
+          firstWord.definition,
+          secondWord.definition,
+          lang === 'vi'
+            ? 'Một lỗi ngữ pháp cần tránh trong văn viết'
+            : 'A grammatical error to avoid in formal writing',
+          lang === 'vi'
+            ? 'Cách kết thúc cuộc hội thoại đột ngột'
+            : 'An abrupt way to end a conversation',
+        ],
+        correctIndex: 0,
+        explanation: `"${firstWord.term}": ${firstWord.definition}`,
+      },
+    ];
   }
 
   private sanitizeStudyGuide(
@@ -508,6 +719,17 @@ export class LearningPathAiService {
       .map((tip) => this.cleanString(tip, 280))
       .filter((tip): tip is string => Boolean(tip))
       .slice(0, 4);
+
+    if (grammarPoints.length === 0) {
+      grammarPoints.push({
+        title: grammarFocus,
+        explanation:
+          lang === 'vi'
+            ? `Áp dụng ${grammarFocus} để diễn đạt ý chính rõ ràng và chính xác trong bài "${unitTitle}".`
+            : `Apply ${grammarFocus} to express key ideas clearly and accurately in "${unitTitle}".`,
+        example: `When discussing ${unitTitle.toLowerCase()}, structure each sentence around ${grammarFocus.toLowerCase()}.`,
+      });
+    }
 
     const fallbackOverview =
       lang === 'vi'

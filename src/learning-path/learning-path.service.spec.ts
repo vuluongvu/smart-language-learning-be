@@ -678,4 +678,42 @@ describe('LearningPathService', () => {
     await service.deleteAiTrack(7, 99);
     expect(trackRepo.remove).toHaveBeenCalledWith(savedTracks[0]);
   });
+
+  it('repairs partial or alternatively keyed AI study materials and retries once on transient JSON failure', async () => {
+    aiService.chatJson
+      .mockRejectedValueOnce(new Error('Truncated JSON output'))
+      .mockResolvedValueOnce({
+        model: 'qwen/qwen3.8-27b',
+        data: {
+          words: [
+            {
+              word: 'stance',
+              meaning: 'Quan điểm rõ ràng về một vấn đề',
+            },
+          ],
+          reading_listening: {
+            title: 'Nuanced Perspectives',
+          },
+        },
+      });
+
+    const pack = await learningPathAiService.generateUnitStudyPack({
+      unit: {
+        unitNumber: 2,
+        title: 'Nuanced Opinion Formation',
+        topicName: 'Academic Debate & Critical Thinking',
+        grammarFocus: 'Concessive clauses with although and whereas',
+      },
+      goalTopic: 'IELTS Speaking & Writing Band 6.5',
+      targetBand: 'band_55_65',
+      explanationLang: 'vi',
+    });
+
+    expect(aiService.chatJson).toHaveBeenCalledTimes(2);
+    expect(pack.vocabulary.length).toBeGreaterThanOrEqual(4);
+    expect(pack.vocabulary[0].term).toBe('stance');
+    expect(pack.readingListening.audioScript.length).toBeGreaterThan(40);
+    expect(pack.readingListening.questions.length).toBeGreaterThanOrEqual(2);
+    expect(pack.studyGuide.grammarPoints.length).toBeGreaterThanOrEqual(1);
+  });
 });
