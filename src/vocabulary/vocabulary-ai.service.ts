@@ -7,9 +7,20 @@ import { AiService, AiTokenUsage } from '../ai/ai.service.js';
 import { TopicsService } from '../topics/topics.service.js';
 import {
   AiEnrichVocabularyDto,
+  AiExtractImageVocabularyDto,
   AiGenerateVocabularyDto,
 } from './dto/ai-vocabulary.dto.js';
 import { VocabularyService } from './vocabulary.service.js';
+
+export const MAX_VOCAB_IMAGE_BYTES = 5 * 1024 * 1024;
+export const DEFAULT_IMAGE_EXTRACT_COUNT = 8;
+
+export interface UploadedImageInput {
+  buffer: Buffer;
+  mimetype: string;
+  originalname: string;
+  size: number;
+}
 
 export interface AiVocabularyDraft {
   term: string;
@@ -33,6 +44,10 @@ export interface AiGenerateVocabularyResult {
   usage?: AiTokenUsage;
 }
 
+export interface AiExtractImageVocabularyResult extends AiGenerateVocabularyResult {
+  suggestedTopic: string | null;
+}
+
 interface RawAiVocabItem {
   term?: unknown;
   pronunciation?: unknown;
@@ -53,6 +68,54 @@ const GENERATE_SYSTEM_PROMPT =
   'Return valid JSON only with shape {"items":[...]}. Each item MUST have exact keys: ' +
   '{"term":"English word or phrase","pronunciation":"/IPA/","partOfSpeech":"noun|verb|adjective|adverb|phrase|idiom|preposition","definition":"concise Vietnamese meaning","example":"natural English sentence","notes":"short Vietnamese usage tip or null"}. ' +
   'Rules: definition and notes MUST be in Vietnamese; example MUST be in English; avoid duplicate terms.';
+
+const IMAGE_EXTRACT_SYSTEM_PROMPT =
+  'You are a bilingual English-Vietnamese vocabulary curator with OCR and vision analysis. ' +
+  'Inspect the image carefully: read any visible English text (book pages, notes, slides, screenshots, signs, menus) or identify key English concepts/objects shown if there is minimal text, and extract up to the requested number of useful English vocabulary words or phrases worth learning. ' +
+  'Return valid JSON only with shape {"suggestedTopic":"short 2-4 word topic title or null","items":[...]}. ' +
+  'Each item MUST have exact keys: ' +
+  '{"term":"English word or phrase","pronunciation":"/IPA/","partOfSpeech":"noun|verb|adjective|adverb|phrase|idiom|preposition","definition":"concise Vietnamese meaning","example":"natural English sentence (prefer context from the image if applicable)","notes":"short Vietnamese usage tip or null"}. ' +
+  'Rules: prioritize actual English terms visible in the image when text is present; definition and notes MUST be in Vietnamese; example MUST be in English; avoid duplicate terms; if no usable English vocabulary can be found, return {"suggestedTopic":null,"items":[]}.';
+
+function detectImageMimeType(
+  buffer: Buffer,
+): 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | null {
+  if (
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  ) {
+    return 'image/png';
+  }
+  if (
+    buffer.length >= 3 &&
+    buffer[0] === 0xff &&
+    buffer[1] === 0xd8 &&
+    buffer[2] === 0xff
+  ) {
+    return 'image/jpeg';
+  }
+  if (
+    buffer.length >= 12 &&
+    buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
+    buffer.subarray(8, 12).toString('ascii') === 'WEBP'
+  ) {
+    return 'image/webp';
+  }
+  if (buffer.length >= 6) {
+    const header = buffer.subarray(0, 6).toString('ascii');
+    if (header === 'GIF87a' || header === 'GIF89a') {
+      return 'image/gif';
+    }
+  }
+  return null;
+}
 
 @Injectable()
 export class VocabularyAiService {
@@ -121,26 +184,12 @@ export class VocabularyAiService {
 
     const mode = dto.mode ?? 'topic';
     const count = dto.count ?? 5;
-    let topicContext = '';
-    let avoidTerms: string[] = [];
-
-    if (dto.topicId) {
-      const [topic] = await this.topicsService.findOwnedTopicsByIds(userId, [
-        dto.topicId,
-      ]);
-      topicContext = `\nTarget topic: ${topic.name}${topic.description ? ` (${topic.description})` : ''}`;
-      avoidTerms = await this.vocabularyService.listTopicTerms(
-        userId,
-        dto.topicId,
-        30,
-      );
-    }
+    const { topicContext, avoidLine } = await this.resolveTopicContext(
+      userId,
+      dto.topicId,
+    );
 
     const levelLine = dto.level ? `\nCEFR level: ${dto.level}` : '';
-    const avoidLine =
-      avoidTerms.length > 0
-        ? `\nAvoid repeating these already-saved terms: ${avoidTerms.join(', ')}`
-        : '';
 
     const userPrompt =
       mode === 'passage'
@@ -160,8 +209,128 @@ export class VocabularyAiService {
       },
     );
 
-    const rawItems = Array.isArray(data.items)
-      ? (data.items as RawAiVocabItem[])
+    const items = await this.finalizeDrafts(userId, data.items, count);
+    if (items.length === 0) {
+      throw new BadGatewayException(
+        'AI provider returned no usable vocabulary items',
+      );
+    }
+
+    return {
+      model,
+      items,
+      usage,
+    };
+  }
+
+  async extractFromImage(
+    userId: number,
+    file: UploadedImageInput | undefined,
+    dto: AiExtractImageVocabularyDto,
+  ): Promise<AiExtractImageVocabularyResult> {
+    const dataUrl = this.validateAndEncodeImage(file);
+    const count = dto.count ?? DEFAULT_IMAGE_EXTRACT_COUNT;
+    const { topicContext, avoidLine } = await this.resolveTopicContext(
+      userId,
+      dto.topicId,
+    );
+
+    const levelLine = dto.level ? `\nTarget CEFR level: ${dto.level}` : '';
+    const focusLine = dto.prompt?.trim()
+      ? `\nLearner focus instruction: ${dto.prompt.trim()}`
+      : '';
+
+    const instructionText =
+      `Extract up to ${count} useful English vocabulary words or phrases from this image.` +
+      `${levelLine}${topicContext}${avoidLine}${focusLine}`;
+
+    const { model, data, usage } = await this.aiService.chatJson<{
+      suggestedTopic?: unknown;
+      items?: unknown;
+    }>(
+      [
+        { role: 'system', content: IMAGE_EXTRACT_SYSTEM_PROMPT },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: instructionText },
+            { type: 'image_url', image_url: { url: dataUrl } },
+          ],
+        },
+      ],
+      {
+        temperature: 0.25,
+        maxTokens: Math.min(2048, 175 * count + 220),
+        vision: true,
+        timeoutMs: 60_000,
+      },
+    );
+
+    const items = await this.finalizeDrafts(userId, data.items, count);
+    if (items.length === 0) {
+      throw new BadRequestException(
+        'No English vocabulary could be extracted from this image. Try a clearer image or add a focus prompt.',
+      );
+    }
+
+    return {
+      model,
+      suggestedTopic: this.cleanText(data.suggestedTopic, 120),
+      items,
+      usage,
+    };
+  }
+
+  private validateAndEncodeImage(file?: UploadedImageInput): string {
+    if (!file || !file.buffer || file.buffer.length === 0) {
+      throw new BadRequestException('Image file is required');
+    }
+    if (file.buffer.length > MAX_VOCAB_IMAGE_BYTES) {
+      throw new BadRequestException('Image file size must not exceed 5 MB');
+    }
+
+    const detectedMime = detectImageMimeType(file.buffer);
+    if (!detectedMime) {
+      throw new BadRequestException(
+        'Unsupported image format. Please upload a PNG, JPEG, WebP, or GIF file.',
+      );
+    }
+
+    return `data:${detectedMime};base64,${file.buffer.toString('base64')}`;
+  }
+
+  private async resolveTopicContext(
+    userId: number,
+    topicId?: number,
+  ): Promise<{ topicContext: string; avoidLine: string }> {
+    if (!topicId) {
+      return { topicContext: '', avoidLine: '' };
+    }
+
+    const [topic] = await this.topicsService.findOwnedTopicsByIds(userId, [
+      topicId,
+    ]);
+    const topicContext = `\nTarget topic: ${topic.name}${topic.description ? ` (${topic.description})` : ''}`;
+    const avoidTerms = await this.vocabularyService.listTopicTerms(
+      userId,
+      topicId,
+      30,
+    );
+    const avoidLine =
+      avoidTerms.length > 0
+        ? `\nAvoid repeating these already-saved terms: ${avoidTerms.join(', ')}`
+        : '';
+
+    return { topicContext, avoidLine };
+  }
+
+  private async finalizeDrafts(
+    userId: number,
+    rawItemsInput: unknown,
+    limit: number,
+  ): Promise<AiVocabularyDraft[]> {
+    const rawItems = Array.isArray(rawItemsInput)
+      ? (rawItemsInput as RawAiVocabItem[])
       : [];
 
     const deduped: Array<Omit<AiVocabularyDraft, 'alreadyExists'>> = [];
@@ -173,13 +342,11 @@ export class VocabularyAiService {
       if (seen.has(key)) continue;
       seen.add(key);
       deduped.push(draft);
-      if (deduped.length >= count) break;
+      if (deduped.length >= limit) break;
     }
 
     if (deduped.length === 0) {
-      throw new BadGatewayException(
-        'AI provider returned no usable vocabulary items',
-      );
+      return [];
     }
 
     const existingSet = await this.vocabularyService.findExistingTermSet(
@@ -187,14 +354,10 @@ export class VocabularyAiService {
       deduped.map((d) => d.term),
     );
 
-    return {
-      model,
-      items: deduped.map((draft) => ({
-        ...draft,
-        alreadyExists: existingSet.has(draft.term.toLowerCase()),
-      })),
-      usage,
-    };
+    return deduped.map((draft) => ({
+      ...draft,
+      alreadyExists: existingSet.has(draft.term.toLowerCase()),
+    }));
   }
 
   private sanitizeDraft(

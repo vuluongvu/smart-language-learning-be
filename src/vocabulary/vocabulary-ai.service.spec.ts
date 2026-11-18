@@ -147,4 +147,122 @@ describe('VocabularyAiService', () => {
       },
     ]);
   });
+
+  it('extracts vocabulary drafts and suggestedTopic from a valid uploaded image', async () => {
+    const pngBuffer = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+    ]);
+    topicsService.findOwnedTopicsByIds.mockResolvedValue([
+      { id: 4, name: 'Travel', description: null },
+    ]);
+    aiService.chatJson.mockResolvedValue({
+      model: 'qwen/qwen3.8-27b',
+      data: {
+        suggestedTopic: 'Airport Signs',
+        items: [
+          {
+            term: 'boarding pass',
+            pronunciation: '/ˈbɔːrdɪŋ pæs/',
+            partOfSpeech: 'noun',
+            definition: 'Thẻ lên máy bay',
+            example: 'Please show your boarding pass at the gate.',
+            notes: 'Thường dùng tại sân bay',
+          },
+          {
+            term: 'BOARDING PASS',
+            partOfSpeech: 'noun',
+            definition: 'Duplicate term',
+          },
+        ],
+      },
+    });
+    vocabularyService.findExistingTermSet.mockResolvedValue(new Set());
+
+    const result = await service.extractFromImage(
+      5,
+      {
+        buffer: pngBuffer,
+        mimetype: 'application/octet-stream',
+        originalname: 'sign.png',
+        size: pngBuffer.length,
+      },
+      { prompt: 'Airport words', level: 'B1', count: 6, topicId: 4 },
+    );
+
+    expect(aiService.chatJson).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({ role: 'system' }),
+        {
+          role: 'user',
+          content: [
+            expect.objectContaining({
+              type: 'text',
+              text: expect.stringContaining('Airport words'),
+            }),
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:image/png;base64,${pngBuffer.toString('base64')}`,
+              },
+            },
+          ],
+        },
+      ],
+      expect.objectContaining({ vision: true }),
+    );
+    expect(result.suggestedTopic).toBe('Airport Signs');
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].term).toBe('boarding pass');
+  });
+
+  it('rejects missing, unsupported, oversized, or empty-result image uploads', async () => {
+    await expect(service.extractFromImage(5, undefined, {})).rejects.toThrow(
+      BadRequestException,
+    );
+
+    await expect(
+      service.extractFromImage(
+        5,
+        {
+          buffer: Buffer.from('not-an-image'),
+          mimetype: 'image/png',
+          originalname: 'fake.png',
+          size: 12,
+        },
+        {},
+      ),
+    ).rejects.toThrow(BadRequestException);
+
+    const oversized = Buffer.alloc(5 * 1024 * 1024 + 1);
+    await expect(
+      service.extractFromImage(
+        5,
+        {
+          buffer: oversized,
+          mimetype: 'image/jpeg',
+          originalname: 'big.jpg',
+          size: oversized.length,
+        },
+        {},
+      ),
+    ).rejects.toThrow(BadRequestException);
+
+    const jpegBuffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+    aiService.chatJson.mockResolvedValue({
+      model: 'qwen/qwen3.8-27b',
+      data: { suggestedTopic: null, items: [] },
+    });
+    await expect(
+      service.extractFromImage(
+        5,
+        {
+          buffer: jpegBuffer,
+          mimetype: 'image/jpeg',
+          originalname: 'blank.jpg',
+          size: jpegBuffer.length,
+        },
+        {},
+      ),
+    ).rejects.toThrow(BadRequestException);
+  });
 });

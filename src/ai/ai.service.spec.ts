@@ -360,4 +360,55 @@ describe('AiService', () => {
     const [, chatInit] = fetchMock.mock.calls[2];
     expect(JSON.parse(chatInit.body).max_tokens).toBe(DEFAULT_CHAT_MAX_TOKENS);
   });
+
+  it('uses vision candidate pool without text fallbacks and maps 400 image error to BadRequest', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          model: 'qwen/qwen3.8-27b',
+          choices: [
+            { message: { role: 'assistant', content: '{"items":[]}' } },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        text: async () => '{"error":{"message":"invalid image data"}}',
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = createService({
+      AI_PROVIDER: 'groq',
+      GROQ_API_KEY: 'key',
+      GROQ_MODEL: 'openai/gpt-oss-120b',
+    });
+
+    expect(service.getCandidateModels(true)).toEqual(['qwen/qwen3.8-27b']);
+
+    await service.chatJson(
+      [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Extract words' },
+            {
+              type: 'image_url',
+              image_url: { url: 'data:image/png;base64,abc' },
+            },
+          ],
+        },
+      ],
+      { vision: true },
+    );
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).model).toBe(
+      'qwen/qwen3.8-27b',
+    );
+
+    await expect(
+      service.chat([{ role: 'user', content: 'bad image' }], { vision: true }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
 });
