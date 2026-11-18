@@ -1,10 +1,10 @@
 import { parseCorsOrigins } from './cors.util.js';
 
 describe('parseCorsOrigins', () => {
-  it('parses comma-separated origins and strips wildcards/whitespace', () => {
+  it('parses comma-separated origins, strips trailing slashes and wildcards', () => {
     expect(
       parseCorsOrigins(
-        'http://localhost:4200, https://app.example.com , *',
+        'http://localhost:4200/, https://app.example.com/ , *',
         'production',
       ),
     ).toEqual(['http://localhost:4200', 'https://app.example.com']);

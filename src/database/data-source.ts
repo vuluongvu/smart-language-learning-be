@@ -1,5 +1,11 @@
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
+import { resolveMysqlSslConfig } from '../common/utils/db-ssl.util.js';
+
+const ssl = resolveMysqlSslConfig(
+  process.env.DB_SSL,
+  process.env.DB_SSL_REJECT_UNAUTHORIZED,
+);
 
 export const AppDataSource = new DataSource({
   type: 'mysql',
@@ -12,4 +18,5 @@ export const AppDataSource = new DataSource({
   migrations: ['dist/database/migrations/*.js'],
   synchronize: false,
   timezone: 'Z',
+  ...(ssl ? { ssl } : {}),
 });

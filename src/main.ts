@@ -1,4 +1,5 @@
 import { NestFactory, Reflector } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module.js';
 import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
@@ -6,7 +7,10 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { parseCorsOrigins } from './common/utils/cors.util.js';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  // Trust the first reverse proxy hop (AWS ALB / CloudFront / Caddy / Nginx) so throttling uses client IP
+  app.set('trust proxy', 1);
 
   // enable global validate pipe
   app.useGlobalPipes(
@@ -23,8 +27,13 @@ async function bootstrap() {
   // enable shutdown hooks for graceful shutdown
   app.enableShutdownHooks();
 
-  // use helmet for security headers
-  app.use(helmet());
+  // use helmet with Google Sign-In popup & cross-origin SPA compatibility
+  app.use(
+    helmet({
+      crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
 
   // enable CORS using strict allowlist parsing
   app.enableCors({
