@@ -20,12 +20,14 @@ import {
 } from '../../common/constants/learning-languages.js';
 
 export const ENGLISH_GOAL_BANDS = [
+  'starter_a0',
   'band_45_55',
   'band_55_65',
   'band_65_75',
 ] as const;
 
 export const KOREAN_GOAL_BANDS = [
+  'ko_starter_a0',
   'topik_1_2',
   'topik_3_4',
   'topik_5_6',
@@ -37,7 +39,15 @@ export const LEARNING_GOAL_BANDS = [
 ] as const;
 export type LearningGoalBand = (typeof LEARNING_GOAL_BANDS)[number];
 
-export const CEFR_GOAL_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] as const;
+export const CEFR_GOAL_LEVELS = [
+  'A0',
+  'A1',
+  'A2',
+  'B1',
+  'B2',
+  'C1',
+  'C2',
+] as const;
 
 export class LearningPathOverviewQueryDto {
   @ApiPropertyOptional()
