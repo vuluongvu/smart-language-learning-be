@@ -63,6 +63,10 @@ export class UsersService {
       passwordHash,
       displayName: dto.displayName.trim(),
       timezone: dto.timezone ?? 'UTC',
+      learningGoalBand: 'starter_a0',
+      currentLevel: 'A0',
+      koreanGoalBand: 'ko_starter_a0',
+      koreanCurrentLevel: 'A0',
     });
 
     return this.userRepository.save(user);
