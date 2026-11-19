@@ -61,7 +61,12 @@ async function bootstrap() {
   }
 
   // start the application
-  await app.listen(process.env.PORT ?? 3000);
+  const server = await app.listen(process.env.PORT ?? 3000);
+  // Keep idle HTTP connections alive longer than AWS ALB's 60s timeout to prevent 502 resets,
+  // and give multi-step AI generation requests generous time to complete.
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
+  server.requestTimeout = 180_000;
 }
 // start the application
 await bootstrap();

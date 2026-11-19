@@ -411,4 +411,139 @@ describe('AiService', () => {
       service.chat([{ role: 'user', content: 'bad image' }], { vision: true }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  it('sends reasoning hints in jsonMode, strips unsupported reasoning fields on 400, and fails over on json_validate_failed/empty JSON', async () => {
+    const fetchMock = vi
+      .fn()
+      // Attempt 1: qwen/qwen3.8-27b rejects reasoning_effort with 400 -> retry same model without reasoning fields
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        text: async () =>
+          '{"error":{"message":"Unknown field: reasoning_effort"}}',
+      })
+      // Attempt 2: qwen/qwen3.8-27b returns 200 OK with empty content (finish_reason=length) -> failover to gpt-oss-120b
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          model: 'qwen/qwen3.8-27b',
+          choices: [
+            {
+              message: { role: 'assistant', content: '' },
+              finish_reason: 'length',
+            },
+          ],
+        }),
+      })
+      // Attempt 3: openai/gpt-oss-120b returns 400 json_validate_failed -> retries same model without response_format
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        text: async () =>
+          '{"error":{"code":"json_validate_failed","message":"Failed to generate JSON"}}',
+      })
+      // Attempt 4: openai/gpt-oss-120b plain prompt retry succeeds cleanly
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          model: 'openai/gpt-oss-120b',
+          choices: [
+            {
+              message: { role: 'assistant', content: '{"status":"ok"}' },
+              finish_reason: 'stop',
+            },
+          ],
+        }),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = createService({ AI_PROVIDER: 'groq', GROQ_API_KEY: 'key' });
+    const res = await service.chatJson<{ status: string }>([
+      { role: 'user', content: 'Return status' },
+    ]);
+
+    expect(res).toEqual({
+      model: 'openai/gpt-oss-120b',
+      data: { status: 'ok' },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+
+    const call0Body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(call0Body.model).toBe('qwen/qwen3.8-27b');
+    expect(call0Body.reasoning_effort).toBe('none');
+
+    const call1Body = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(call1Body.reasoning_effort).toBeUndefined();
+
+    const call2Body = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(call2Body.model).toBe('openai/gpt-oss-120b');
+    expect(call2Body.reasoning_effort).toBe('low');
+    expect(call2Body.reasoning_format).toBe('parsed');
+    expect(call2Body.response_format).toEqual({ type: 'json_object' });
+
+    const call3Body = JSON.parse(fetchMock.mock.calls[3][1].body);
+    expect(call3Body.model).toBe('openai/gpt-oss-120b');
+    expect(call3Body.response_format).toBeUndefined();
+  });
+
+  it('fails over on network timeouts/404 and respects x-ratelimit-reset-tokens duration headers', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-19T12:00:00Z'));
+
+    try {
+      const fetchMock = vi
+        .fn()
+        // Primary qwen times out/rejects -> fail over cleanly to gpt-oss-120b
+        .mockRejectedValueOnce(new Error('timeout'))
+        // gpt-oss-120b hits 429 with x-ratelimit-reset-tokens: 8.5s -> cooldown 9s, move to gpt-oss-20b
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 429,
+          headers: new Headers({ 'x-ratelimit-reset-tokens': '8.5s' }),
+          text: async () => 'TPM limit reached',
+        })
+        // gpt-oss-20b succeeds
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            model: 'openai/gpt-oss-20b',
+            choices: [{ message: { role: 'assistant', content: 'ready' } }],
+          }),
+        });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const service = createService({
+        AI_PROVIDER: 'groq',
+        GROQ_API_KEY: 'key',
+      });
+      const res = await service.chat([{ role: 'user', content: 'hello' }]);
+
+      expect(res.model).toBe('openai/gpt-oss-20b');
+      expect(res.content).toBe('ready');
+
+      const selectionAfter9s = service.selectAvailableModels(
+        Date.now() + 9_500,
+      );
+      expect(selectionAfter9s.available).toContain('openai/gpt-oss-120b');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('surfaces actionable 403 network/egress error without endless retries', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      headers: new Headers({ 'cf-ray': 'abc123-SIN' }),
+      text: async () =>
+        '{"error":{"message":"Access denied. Please check your network settings."}}',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = createService({ AI_PROVIDER: 'groq', GROQ_API_KEY: 'key' });
+    await expect(
+      service.chat([{ role: 'user', content: 'hi' }]),
+    ).rejects.toThrow('403');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });

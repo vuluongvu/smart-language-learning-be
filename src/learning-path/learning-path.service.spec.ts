@@ -1,4 +1,9 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  NotFoundException,
+} from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
 import { vi } from 'vitest';
 import { AiConversationService } from '../ai/ai-conversation.service.js';
@@ -782,5 +787,165 @@ describe('LearningPathService', () => {
         dailyGoalMinutes: 30,
       }),
     );
+  });
+
+  it('does not blindly retry 429 errors in generateUnitStudyPack and falls back gracefully when 1 of multiple AI units fails', async () => {
+    const rateLimitError = new HttpException(
+      'AI rate limit reached. Please wait about 10s and try again.',
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
+
+    aiService.chatJson.mockRejectedValueOnce(rateLimitError);
+
+    await expect(
+      learningPathAiService.generateUnitStudyPack({
+        unit: {
+          unitNumber: 1,
+          title: 'Travel Phrases',
+          topicName: 'Airport & Check-in',
+          icon: 'globe',
+          themeColor: 'green',
+          grammarFocus: 'Polite requests with could and would',
+          speakingTopicPrompt: 'Check in at the airport desk.',
+        },
+        goalTopic: 'Travel English',
+        targetBand: 'band_45_55',
+        explanationLang: 'vi',
+      }),
+    ).rejects.toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS });
+    expect(aiService.chatJson).toHaveBeenCalledTimes(1);
+
+    aiService.chatJson.mockReset();
+    aiService.chatJson
+      .mockResolvedValueOnce({
+        model: 'openai/gpt-oss-120b',
+        data: {
+          trackTitle: 'Travel Mastery',
+          trackSummary: 'Practical travel communication',
+          partTitle: 'Core Situations',
+          partSubtitle: 'On the road',
+          units: [
+            {
+              title: 'At the Airport',
+              topicName: 'Airport Check-in',
+              grammarFocus: 'Polite modal requests',
+              icon: 'globe',
+              themeColor: 'green',
+              speakingTopicPrompt: 'Ask about boarding gate changes.',
+              targetKeywords: ['boarding pass', 'baggage drop', 'departure'],
+            },
+            {
+              title: 'Hotel Check-in',
+              topicName: 'Hotel Booking',
+              grammarFocus: 'Indirect questions',
+              icon: 'home',
+              themeColor: 'pink',
+              speakingTopicPrompt: 'Confirm your room reservation.',
+              targetKeywords: ['reservation', 'concierge', 'check-out'],
+            },
+          ],
+        },
+      })
+      // Unit 1 succeeds
+      .mockResolvedValueOnce({
+        model: 'openai/gpt-oss-120b',
+        data: {
+          vocabulary: [
+            {
+              term: 'boarding pass',
+              definition: 'Thẻ lên máy bay',
+              example: 'Keep your boarding pass ready at the gate.',
+            },
+          ],
+          readingListening: {
+            title: 'Boarding Announcement',
+            audioScript:
+              'Passengers flying to Tokyo please proceed to gate twelve now.',
+            translation: 'Hành khách đi Tokyo vui lòng đến cửa số 12.',
+            questions: [
+              {
+                prompt: 'Which gate should passengers visit?',
+                options: ['Gate 10', 'Gate 12', 'Gate 14', 'Gate 16'],
+                correctIndex: 1,
+                explanation: 'The announcement mentions gate twelve.',
+              },
+            ],
+          },
+        },
+      })
+      // Unit 2 hits 429 after Unit 1 succeeded -> deterministic fallback should complete track
+      .mockRejectedValueOnce(rateLimitError);
+
+    userRepo.findOneBy.mockResolvedValue({
+      id: 7,
+      learningLanguage: 'en',
+      learningGoalBand: 'band_45_55',
+      currentLevel: 'B1',
+      dailyGoalMinutes: 15,
+    });
+
+    const savedTracks: LearningPathTrack[] = [];
+    const savedParts: LearningPathPart[] = [];
+    const savedUnits: LearningPathUnit[] = [];
+
+    dataSource.transaction.mockImplementationOnce(
+      async (cb: (manager: unknown) => Promise<unknown>) =>
+        cb({
+          getRepository: (entity: unknown) => {
+            if (entity === LearningPathTrack) {
+              return {
+                create: (x: object) => x,
+                save: async (t: LearningPathTrack) => {
+                  const row = { ...t, id: 101 };
+                  savedTracks.push(row);
+                  return row;
+                },
+              };
+            }
+            if (entity === LearningPathPart) {
+              return {
+                create: (x: object) => x,
+                save: async (p: LearningPathPart) => {
+                  const row = { ...p, id: 201 };
+                  savedParts.push(row);
+                  return row;
+                },
+              };
+            }
+            return {
+              create: (x: object) => x,
+              save: async (u: LearningPathUnit) => {
+                const row = { ...u, id: 300 + savedUnits.length };
+                savedUnits.push(row);
+                return row;
+              },
+            };
+          },
+        }),
+    );
+
+    trackRepo.find.mockResolvedValue(savedTracks);
+    partRepo.find.mockResolvedValue(savedParts);
+    unitRepo.find.mockResolvedValue(savedUnits);
+
+    const overview = await service.generateAiLearningPath(7, {
+      goalTopic: 'Travel Mastery',
+      targetBand: 'band_45_55',
+      currentLevel: 'B1',
+      unitCount: 2,
+      explanationLang: 'vi',
+    });
+
+    expect(overview.parts[0].units).toHaveLength(2);
+    expect(savedUnits[0].vocabularyJson[0].term).toBe('boarding pass');
+    expect(savedUnits[1].vocabularyJson.length).toBeGreaterThanOrEqual(4);
+    expect(
+      savedUnits[1].readingPassageJson.questions.length,
+    ).toBeGreaterThanOrEqual(2);
+    // Sibling targetKeywords were injected into Unit 1 avoidTerms call
+    const unit1CallMessages = aiService.chatJson.mock.calls[1][0] as Array<{
+      content: string;
+    }>;
+    expect(unit1CallMessages[1].content).toContain('reservation');
   });
 });
