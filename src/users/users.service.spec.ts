@@ -94,7 +94,91 @@ describe('UsersService', () => {
 
   it('requires explicit confirmation to delete account', async () => {
     await expect(
-      service.deleteMyAccount(1, { confirm: false }),
+      service.deleteMyAccount(1, {
+        confirm: false,
+        confirmEmail: 'learner@example.com',
+      }),
     ).rejects.toThrow(BadRequestException);
+    expect(userRepo.delete).not.toHaveBeenCalled();
+  });
+
+  it('rejects account deletion when confirmation email does not match', async () => {
+    const qb = {
+      addSelect: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      getOne: vi.fn().mockResolvedValue({
+        id: 1,
+        email: 'learner@example.com',
+        passwordHash: null,
+      }),
+    };
+    userRepo.createQueryBuilder.mockReturnValue(qb);
+
+    await expect(
+      service.deleteMyAccount(1, {
+        confirm: true,
+        confirmEmail: 'other@example.com',
+      }),
+    ).rejects.toThrow('Confirmation email does not match your account email');
+    expect(userRepo.delete).not.toHaveBeenCalled();
+  });
+
+  it('deletes passwordless OAuth account only when confirm and matching email are provided', async () => {
+    const qb = {
+      addSelect: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      getOne: vi.fn().mockResolvedValue({
+        id: 2,
+        email: 'oauth.user@example.com',
+        passwordHash: null,
+      }),
+    };
+    userRepo.createQueryBuilder.mockReturnValue(qb);
+
+    const res = await service.deleteMyAccount(2, {
+      confirm: true,
+      confirmEmail: '  OAUTH.USER@Example.com ',
+    });
+
+    expect(res.message).toBe('Account deleted successfully');
+    expect(userRepo.delete).toHaveBeenCalledWith({ id: 2 });
+  });
+
+  it('requires both matching email and valid password for password-protected accounts', async () => {
+    const currentHash = await hashPassword('SecretPass123!');
+    const qb = {
+      addSelect: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      getOne: vi.fn().mockResolvedValue({
+        id: 3,
+        email: 'local.user@example.com',
+        passwordHash: currentHash,
+      }),
+    };
+    userRepo.createQueryBuilder.mockReturnValue(qb);
+
+    await expect(
+      service.deleteMyAccount(3, {
+        confirm: true,
+        confirmEmail: 'local.user@example.com',
+      }),
+    ).rejects.toThrow('Current password is required to delete your account');
+
+    await expect(
+      service.deleteMyAccount(3, {
+        confirm: true,
+        confirmEmail: 'local.user@example.com',
+        currentPassword: 'WrongPassword!',
+      }),
+    ).rejects.toThrow('Current password is incorrect');
+    expect(userRepo.delete).not.toHaveBeenCalled();
+
+    const res = await service.deleteMyAccount(3, {
+      confirm: true,
+      confirmEmail: 'local.user@example.com',
+      currentPassword: 'SecretPass123!',
+    });
+    expect(res.message).toBe('Account deleted successfully');
+    expect(userRepo.delete).toHaveBeenCalledWith({ id: 3 });
   });
 });

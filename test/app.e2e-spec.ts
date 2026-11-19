@@ -47,7 +47,11 @@ describe('Phase 1 Auth, Users & Languages (e2e)', () => {
       await request(app.getHttpServer())
         .delete('/api/v1/users/me')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ confirm: true, currentPassword: password });
+        .send({
+          confirm: true,
+          confirmEmail: uniqueEmail,
+          currentPassword: password,
+        });
     }
     await app.close();
   });
