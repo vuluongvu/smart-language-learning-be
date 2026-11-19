@@ -137,10 +137,17 @@ export class AiConversationService {
     const explanationLang: ExplanationLanguage = dto.explanationLang ?? 'vi';
     const languageCode = normalizeLearningLanguage(dto.languageCode);
     const targetLangName = getLearningLanguageDisplayName(languageCode);
+    const explainLangName = explanationLang === 'en' ? 'English' : 'Vietnamese';
+    const isAbsoluteZero = level === 'A0';
     const koreanScriptHint =
       languageCode === 'ko'
-        ? ' Use natural Korean Hangul in polite -아요/-어요 style suitable for learners.'
+        ? isAbsoluteZero
+          ? ' Use very simple Hangul with [Romanization] and meaning hint right after.'
+          : ' Use natural Korean Hangul in polite -아요/-어요 style suitable for learners.'
         : '';
+    const beginnerRule = isAbsoluteZero
+      ? ` Because level is A0 (absolute beginner who knows almost nothing yet), keep each field super short (<= 8 ${targetLangName} words) and include a brief ${explainLangName} translation in parentheses so the learner is never lost.`
+      : '';
 
     const { data } = await this.aiService.chatJson<RawOpeningResponse>(
       [
@@ -149,7 +156,7 @@ export class AiConversationService {
           content:
             `You are a friendly ${targetLangName} conversation coach starting a guided 1-on-1 practice session. ` +
             'Return ONLY valid JSON with exact keys: {"greeting":"...","openingQuestion":"..."}. ' +
-            `Rules: Both fields MUST be written in natural ${targetLangName} calibrated strictly to the requested CEFR level.${koreanScriptHint} ` +
+            `Rules: Both fields MUST be written in natural ${targetLangName} calibrated strictly to the requested CEFR level.${koreanScriptHint}${beginnerRule} ` +
             'greeting: 1 short warm sentence welcoming the learner to the scenario. ' +
             `openingQuestion: 1 clear, inviting first ${targetLangName} question directly on the topic to get them speaking.`,
         },
@@ -405,6 +412,11 @@ export class AiConversationService {
       ? '\n- Input is from speech-to-text: focus on spoken grammar/word choice and ignore punctuation artifacts.'
       : '';
 
+    const isAbsoluteZero = session.level === 'A0';
+    const zeroStarterRule = isAbsoluteZero
+      ? ` This learner is an ABSOLUTE BEGINNER (A0): praise even a 1-word answer or mixed ${explanationLanguageName} reply warmly; keep improvedVersion, followUpReaction, and nextQuestion ultra-short (3-8 basic ${targetLangName} words) and add a short ${explanationLanguageName} translation + pronunciation tip in parentheses on followUpReaction/nextQuestion.`
+      : '';
+
     const systemPrompt =
       `You are a ${targetLangName} conversation coach. Topic: "${session.topic}" | Level: ${session.level} | Explain in: ${explanationLanguageName}.\n` +
       `Return ONLY valid JSON:\n` +
@@ -418,7 +430,7 @@ export class AiConversationService {
       `  "followUpReaction": "1 warm ${targetLangName} reaction sentence to the reply",\n` +
       `  "nextQuestion": "1 connected ${targetLangName} follow-up question building on the reply (stay on topic)"\n` +
       `}\n` +
-      `Rules: Keep notableErrors <= 3 items ([] if none) and suggestedWords <= 3 items. Write improvedVersion, followUpReaction, nextQuestion in ${session.level} ${targetLangName}.${koreanRule}${speechNote}`;
+      `Rules: Keep notableErrors <= 3 items ([] if none) and suggestedWords <= 3 items. Write improvedVersion, followUpReaction, nextQuestion in ${session.level} ${targetLangName}.${koreanRule}${zeroStarterRule}${speechNote}`;
 
     const userContent =
       (priorHistory ? `Previous turns:\n${priorHistory}\n\n` : '') +

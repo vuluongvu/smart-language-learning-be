@@ -106,6 +106,9 @@ export class LearningPathCatalogService implements OnModuleInit {
                 readingPassageJson: unitSpec.readingListening,
                 writingPromptJson: unitSpec.writing,
                 speakingTopicPrompt: unitSpec.speakingTopicPrompt,
+                ...(unitSpec.studyGuide
+                  ? { studyGuideJson: unitSpec.studyGuide }
+                  : {}),
                 sortOrder: uIdx + 1,
               });
             } else {
@@ -120,6 +123,9 @@ export class LearningPathCatalogService implements OnModuleInit {
               unit.readingPassageJson = unitSpec.readingListening;
               unit.writingPromptJson = unitSpec.writing;
               unit.speakingTopicPrompt = unitSpec.speakingTopicPrompt;
+              if (unitSpec.studyGuide) {
+                unit.studyGuideJson = unitSpec.studyGuide;
+              }
               unit.sortOrder = uIdx + 1;
             }
             await uRepo.save(unit);
@@ -129,6 +135,8 @@ export class LearningPathCatalogService implements OnModuleInit {
     });
 
     const trackCount = await this.trackRepo.count();
-    this.synced = trackCount >= LEARNING_PATH_CATALOG.length;
+    this.synced =
+      trackCount >=
+      LEARNING_PATH_CATALOG.length + KOREAN_LEARNING_PATH_CATALOG.length;
   }
 }

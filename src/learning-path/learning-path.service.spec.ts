@@ -21,6 +21,8 @@ import { UserUnitProgress } from './entities/user-unit-progress.entity.js';
 import { LearningPathAiService } from './learning-path-ai.service.js';
 import { LearningPathCatalogService } from './learning-path-catalog.service.js';
 import { LearningPathService } from './learning-path.service.js';
+import { LEARNING_PATH_CATALOG } from './data/learning-path.catalog.js';
+import { KOREAN_LEARNING_PATH_CATALOG } from './data/learning-path-korean.catalog.js';
 
 describe('LearningPathService', () => {
   let service: LearningPathService;
@@ -947,5 +949,91 @@ describe('LearningPathService', () => {
       content: string;
     }>;
     expect(unit1CallMessages[1].content).toContain('reservation');
+  });
+
+  it('includes curated A0 starter tracks for English and Korean and calibrates A0 writing/speaking gently', async () => {
+    const enStarter = LEARNING_PATH_CATALOG.find(
+      (t) => t.code === 'starter_a0',
+    );
+    const koStarter = KOREAN_LEARNING_PATH_CATALOG.find(
+      (t) => t.code === 'ko_starter_a0',
+    );
+
+    expect(enStarter?.cefrLevel).toBe('A0');
+    expect(enStarter?.parts.flatMap((p) => p.units)).toHaveLength(6);
+    expect(enStarter?.parts[0].units[0].studyGuide?.overview).toBeTruthy();
+
+    expect(koStarter?.cefrLevel).toBe('A0');
+    expect(koStarter?.parts.flatMap((p) => p.units)).toHaveLength(6);
+    expect(koStarter?.parts[0].units[0].studyGuide?.overview).toBeTruthy();
+
+    const a0Track: LearningPathTrack = {
+      ...sampleTrack,
+      id: 90,
+      code: 'starter_a0',
+      title: 'English Zero (A0)',
+      cefrLevel: 'A0',
+      languageCode: 'en',
+    };
+    const a0Part: LearningPathPart = {
+      ...samplePart,
+      id: 900,
+      trackId: 90,
+      track: a0Track,
+    };
+    const a0Unit: LearningPathUnit = {
+      ...sampleUnit1,
+      id: 9001,
+      partId: 900,
+      part: a0Part,
+      writingPromptJson: {
+        prompt: 'Write 1 short greeting.',
+        minSentences: 1,
+        targetBand: 'Zero A0',
+        targetTerms: ['hello'],
+        sampleAnswer: 'Hello, I am An.',
+      },
+    };
+
+    unitRepo.findOneBy.mockResolvedValue(a0Unit);
+    partRepo.findOneBy.mockResolvedValue(a0Part);
+    trackRepo.findOneBy.mockResolvedValue(a0Track);
+    progressRepo.findOneBy.mockResolvedValue(null);
+
+    aiService.chatJson.mockResolvedValueOnce({
+      model: 'openai/gpt-oss-120b',
+      data: {
+        estimatedBand: 'Nhập môn A0',
+        summary: 'Tuyệt vời! Câu ngắn đầu tiên của bạn rất rõ ràng.',
+        notableErrors: [],
+        upgradedVersion: 'Hello! I am An.',
+        explanation: '**Mẹo:** Luôn viết hoa tên riêng.',
+        suggestedWords: [],
+      },
+    });
+
+    const evalRes = await service.evaluateUnitWriting(7, 9001, {
+      text: 'Hi An',
+      explanationLang: 'vi',
+    });
+    expect(evalRes.progress.writingCompleted).toBe(true);
+    expect(evalRes.feedback.estimatedBand).toBe('Nhập môn A0');
+
+    aiConversationService.startSession.mockResolvedValue({
+      id: 501,
+      topic: 'Say hello',
+      level: 'A0',
+      explanationLang: 'vi',
+      status: 'active',
+      turnCount: 0,
+      summary: null,
+      turns: [],
+    });
+
+    await service.startUnitSpeaking(7, 9001, { explanationLang: 'vi' });
+    expect(aiConversationService.startSession).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ level: 'A0' }),
+    );
   });
 });

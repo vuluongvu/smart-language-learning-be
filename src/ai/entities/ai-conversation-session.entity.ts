@@ -11,7 +11,7 @@ import {
 import { User } from '../../users/entities/user.entity.js';
 import type { LearningLanguageCode } from '../../common/constants/learning-languages.js';
 
-export type ConversationLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
+export type ConversationLevel = 'A0' | 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
 export type ExplanationLanguage = 'vi' | 'en';
 export type ConversationSessionStatus = 'active' | 'completed';
 
