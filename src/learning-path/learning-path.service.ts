@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -179,6 +180,8 @@ interface RawWritingEvalResponse {
 
 @Injectable()
 export class LearningPathService {
+  private readonly logger = new Logger(LearningPathService.name);
+
   constructor(
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
@@ -848,25 +851,68 @@ export class LearningPathService {
       languageCode: trackLang,
     });
 
-    const generatedPacks: Array<{
-      outline: (typeof outline.units)[number];
-      pack: Awaited<ReturnType<LearningPathAiService['generateUnitStudyPack']>>;
-    }> = [];
-    const avoidTerms: string[] = [];
+    const packResults = await Promise.allSettled(
+      outline.units.map((unitOutline, idx) => {
+        const siblingTerms = outline.units
+          .filter((_, otherIdx) => otherIdx !== idx)
+          .flatMap((other) => other.targetKeywords ?? []);
+        return this.learningPathAiService.generateUnitStudyPack({
+          goalTopic,
+          unit: unitOutline,
+          targetBand,
+          learningFocus: dto.learningFocus,
+          avoidTerms: siblingTerms,
+          explanationLang: lang,
+          languageCode: trackLang,
+        });
+      }),
+    );
 
-    for (const unitOutline of outline.units) {
-      const pack = await this.learningPathAiService.generateUnitStudyPack({
-        goalTopic,
-        unit: unitOutline,
-        targetBand,
-        learningFocus: dto.learningFocus,
-        avoidTerms,
-        explanationLang: lang,
-        languageCode: trackLang,
-      });
-      avoidTerms.push(...pack.vocabulary.map((w) => w.term));
-      generatedPacks.push({ outline: unitOutline, pack });
+    const fulfilledCount = packResults.filter(
+      (res) => res.status === 'fulfilled',
+    ).length;
+
+    if (fulfilledCount === 0) {
+      const firstRejected = packResults.find(
+        (res): res is PromiseRejectedResult => res.status === 'rejected',
+      );
+      throw firstRejected?.reason;
     }
+
+    const generatedPacks = outline.units.map((unitOutline, idx) => {
+      const result = packResults[idx];
+      if (result.status === 'fulfilled') {
+        return { outline: unitOutline, pack: result.value };
+      }
+
+      if (this.learningPathAiService.isNonRetryableAiError(result.reason)) {
+        const msg =
+          result.reason instanceof Error
+            ? result.reason.message
+            : String(result.reason);
+        // Propagate configuration/auth/disabled errors, but degrade transient 429/502 tail spikes
+        // once at least one unit succeeded from AI so the learner still gets their course.
+        const isAuthOrConfigError =
+          !msg.toLowerCase().includes('rate limit') &&
+          !/too many requests/i.test(msg);
+        if (isAuthOrConfigError) {
+          throw result.reason;
+        }
+      }
+
+      this.logger.warn(
+        `Unit ${unitOutline.unitNumber} AI pack failed after failover (${result.reason instanceof Error ? result.reason.message : String(result.reason)}); using deterministic fallback pack.`,
+      );
+      return {
+        outline: unitOutline,
+        pack: this.learningPathAiService.buildFallbackUnitStudyPack({
+          unit: unitOutline,
+          targetBand,
+          explanationLang: lang,
+          languageCode: trackLang,
+        }),
+      };
+    });
 
     const uniqueSuffix = `${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
     const trackCode = `ai-${userId}-${uniqueSuffix}`.slice(0, 46);
