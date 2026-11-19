@@ -32,7 +32,7 @@ export class TopicsController {
   }
 
   @Post()
-  @ApiOperation({ summary: 'Create a new English topic' })
+  @ApiOperation({ summary: 'Create a new learning topic (en or ko)' })
   create(@CurrentUser('userId') userId: number, @Body() dto: CreateTopicDto) {
     return this.topicsService.create(userId, dto);
   }

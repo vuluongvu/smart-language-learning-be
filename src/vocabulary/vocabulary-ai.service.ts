@@ -4,6 +4,10 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { AiService, AiTokenUsage } from '../ai/ai.service.js';
+import {
+  type LearningLanguageCode,
+  normalizeLearningLanguage,
+} from '../common/constants/learning-languages.js';
 import { TopicsService } from '../topics/topics.service.js';
 import {
   AiEnrichVocabularyDto,
@@ -57,25 +61,60 @@ interface RawAiVocabItem {
   notes?: unknown;
 }
 
-const ENRICH_SYSTEM_PROMPT =
-  'You are a bilingual English-Vietnamese dictionary assistant. ' +
-  'Return valid JSON only for the requested English word or phrase with exact keys: ' +
-  '{"term":"...","pronunciation":"/IPA/","partOfSpeech":"noun|verb|adjective|adverb|phrase|idiom|preposition","definition":"concise Vietnamese meaning","example":"natural English sentence","notes":"short Vietnamese usage tip or collocation, or null"}. ' +
-  'Rules: definition and notes MUST be in Vietnamese; example MUST be in English.';
+function getEnrichSystemPrompt(lang: LearningLanguageCode): string {
+  if (lang === 'ko') {
+    return (
+      'You are a bilingual Korean-Vietnamese dictionary assistant. ' +
+      'Return valid JSON only for the requested Korean word or phrase (Hangul or romanized/Vietnamese query mapped to natural Hangul) with exact keys: ' +
+      '{"term":"Korean Hangul word/phrase","pronunciation":"[Korean reading / Romanization]","partOfSpeech":"noun|verb|adjective|adverb|phrase|idiom|particle|ending","definition":"concise Vietnamese meaning","example":"natural Korean sentence in polite -아요/-어요 or -습니다 style","notes":"short Vietnamese usage tip, honorifics, or conjugation note, or null"}. ' +
+      'Rules: term MUST be in Korean Hangul; definition and notes MUST be in Vietnamese; example MUST be in natural Korean.'
+    );
+  }
+  return (
+    'You are a bilingual English-Vietnamese dictionary assistant. ' +
+    'Return valid JSON only for the requested English word or phrase with exact keys: ' +
+    '{"term":"...","pronunciation":"/IPA/","partOfSpeech":"noun|verb|adjective|adverb|phrase|idiom|preposition","definition":"concise Vietnamese meaning","example":"natural English sentence","notes":"short Vietnamese usage tip or collocation, or null"}. ' +
+    'Rules: definition and notes MUST be in Vietnamese; example MUST be in English.'
+  );
+}
 
-const GENERATE_SYSTEM_PROMPT =
-  'You are a bilingual English-Vietnamese vocabulary curator. ' +
-  'Return valid JSON only with shape {"items":[...]}. Each item MUST have exact keys: ' +
-  '{"term":"English word or phrase","pronunciation":"/IPA/","partOfSpeech":"noun|verb|adjective|adverb|phrase|idiom|preposition","definition":"concise Vietnamese meaning","example":"natural English sentence","notes":"short Vietnamese usage tip or null"}. ' +
-  'Rules: definition and notes MUST be in Vietnamese; example MUST be in English; avoid duplicate terms.';
+function getGenerateSystemPrompt(lang: LearningLanguageCode): string {
+  if (lang === 'ko') {
+    return (
+      'You are a bilingual Korean-Vietnamese vocabulary curator. ' +
+      'Return valid JSON only with shape {"items":[...]}. Each item MUST have exact keys: ' +
+      '{"term":"Korean Hangul word or phrase","pronunciation":"[Korean reading / Romanization]","partOfSpeech":"noun|verb|adjective|adverb|phrase|idiom|particle|ending","definition":"concise Vietnamese meaning","example":"natural Korean sentence","notes":"short Vietnamese usage tip or null"}. ' +
+      'Rules: term and example MUST be in Korean Hangul; definition and notes MUST be in Vietnamese; avoid duplicate terms.'
+    );
+  }
+  return (
+    'You are a bilingual English-Vietnamese vocabulary curator. ' +
+    'Return valid JSON only with shape {"items":[...]}. Each item MUST have exact keys: ' +
+    '{"term":"English word or phrase","pronunciation":"/IPA/","partOfSpeech":"noun|verb|adjective|adverb|phrase|idiom|preposition","definition":"concise Vietnamese meaning","example":"natural English sentence","notes":"short Vietnamese usage tip or null"}. ' +
+    'Rules: definition and notes MUST be in Vietnamese; example MUST be in English; avoid duplicate terms.'
+  );
+}
 
-const IMAGE_EXTRACT_SYSTEM_PROMPT =
-  'You are a bilingual English-Vietnamese vocabulary curator with OCR and vision analysis. ' +
-  'Inspect the image carefully: read any visible English text (book pages, notes, slides, screenshots, signs, menus) or identify key English concepts/objects shown if there is minimal text, and extract up to the requested number of useful English vocabulary words or phrases worth learning. ' +
-  'Return valid JSON only with shape {"suggestedTopic":"short 2-4 word topic title or null","items":[...]}. ' +
-  'Each item MUST have exact keys: ' +
-  '{"term":"English word or phrase","pronunciation":"/IPA/","partOfSpeech":"noun|verb|adjective|adverb|phrase|idiom|preposition","definition":"concise Vietnamese meaning","example":"natural English sentence (prefer context from the image if applicable)","notes":"short Vietnamese usage tip or null"}. ' +
-  'Rules: prioritize actual English terms visible in the image when text is present; definition and notes MUST be in Vietnamese; example MUST be in English; avoid duplicate terms; if no usable English vocabulary can be found, return {"suggestedTopic":null,"items":[]}.';
+function getImageExtractSystemPrompt(lang: LearningLanguageCode): string {
+  if (lang === 'ko') {
+    return (
+      'You are a bilingual Korean-Vietnamese vocabulary curator with OCR and vision analysis. ' +
+      'Inspect the image carefully: read any visible Korean Hangul text (book pages, notes, slides, screenshots, signs, menus) or identify key Korean concepts/objects shown if there is minimal text, and extract up to the requested number of useful Korean vocabulary words or phrases worth learning. ' +
+      'Return valid JSON only with shape {"suggestedTopic":"short 2-4 word topic title or null","items":[...]}. ' +
+      'Each item MUST have exact keys: ' +
+      '{"term":"Korean Hangul word or phrase","pronunciation":"[Korean reading / Romanization]","partOfSpeech":"noun|verb|adjective|adverb|phrase|idiom|particle|ending","definition":"concise Vietnamese meaning","example":"natural Korean sentence (prefer context from the image if applicable)","notes":"short Vietnamese usage tip or null"}. ' +
+      'Rules: prioritize actual Korean terms visible in the image when text is present; term and example MUST be in Korean Hangul; definition and notes MUST be in Vietnamese; avoid duplicate terms; if no usable Korean vocabulary can be found, return {"suggestedTopic":null,"items":[]}.'
+    );
+  }
+  return (
+    'You are a bilingual English-Vietnamese vocabulary curator with OCR and vision analysis. ' +
+    'Inspect the image carefully: read any visible English text (book pages, notes, slides, screenshots, signs, menus) or identify key English concepts/objects shown if there is minimal text, and extract up to the requested number of useful English vocabulary words or phrases worth learning. ' +
+    'Return valid JSON only with shape {"suggestedTopic":"short 2-4 word topic title or null","items":[...]}. ' +
+    'Each item MUST have exact keys: ' +
+    '{"term":"English word or phrase","pronunciation":"/IPA/","partOfSpeech":"noun|verb|adjective|adverb|phrase|idiom|preposition","definition":"concise Vietnamese meaning","example":"natural English sentence (prefer context from the image if applicable)","notes":"short Vietnamese usage tip or null"}. ' +
+    'Rules: prioritize actual English terms visible in the image when text is present; definition and notes MUST be in Vietnamese; example MUST be in English; avoid duplicate terms; if no usable English vocabulary can be found, return {"suggestedTopic":null,"items":[]}.'
+  );
+}
 
 function detectImageMimeType(
   buffer: Buffer,
@@ -134,6 +173,8 @@ export class VocabularyAiService {
       throw new BadRequestException('Term cannot be empty');
     }
 
+    const lang = normalizeLearningLanguage(dto.languageCode);
+    const langLabel = lang === 'ko' ? 'Korean' : 'English';
     const contextHint = dto.context?.trim()
       ? `\nContext hint: ${dto.context.trim()}`
       : '';
@@ -141,10 +182,10 @@ export class VocabularyAiService {
     const { model, data, usage } =
       await this.aiService.chatJson<RawAiVocabItem>(
         [
-          { role: 'system', content: ENRICH_SYSTEM_PROMPT },
+          { role: 'system', content: getEnrichSystemPrompt(lang) },
           {
             role: 'user',
-            content: `English term: "${term}"${contextHint}`,
+            content: `${langLabel} term: "${term}"${contextHint}`,
           },
         ],
         { temperature: 0.3, maxTokens: 320 },
@@ -160,6 +201,7 @@ export class VocabularyAiService {
     const dup = await this.vocabularyService.checkDuplicate(
       userId,
       sanitized.term,
+      lang,
     );
 
     return {
@@ -182,6 +224,8 @@ export class VocabularyAiService {
       throw new BadRequestException('Prompt cannot be empty');
     }
 
+    const lang = normalizeLearningLanguage(dto.languageCode);
+    const langLabel = lang === 'ko' ? 'Korean' : 'English';
     const mode = dto.mode ?? 'topic';
     const count = dto.count ?? 5;
     const { topicContext, avoidLine } = await this.resolveTopicContext(
@@ -189,18 +233,18 @@ export class VocabularyAiService {
       dto.topicId,
     );
 
-    const levelLine = dto.level ? `\nCEFR level: ${dto.level}` : '';
+    const levelLine = dto.level ? `\nCEFR/TOPIK level: ${dto.level}` : '';
 
     const userPrompt =
       mode === 'passage'
-        ? `Extract up to ${count} useful English vocabulary words or phrases from the passage below.${levelLine}${topicContext}${avoidLine}\n\nPassage:\n${prompt}`
-        : `Generate ${count} practical English vocabulary words or phrases for this request: "${prompt}".${levelLine}${topicContext}${avoidLine}`;
+        ? `Extract up to ${count} useful ${langLabel} vocabulary words or phrases from the passage below.${levelLine}${topicContext}${avoidLine}\n\nPassage:\n${prompt}`
+        : `Generate ${count} practical ${langLabel} vocabulary words or phrases for this request: "${prompt}".${levelLine}${topicContext}${avoidLine}`;
 
     const { model, data, usage } = await this.aiService.chatJson<{
       items?: unknown;
     }>(
       [
-        { role: 'system', content: GENERATE_SYSTEM_PROMPT },
+        { role: 'system', content: getGenerateSystemPrompt(lang) },
         { role: 'user', content: userPrompt },
       ],
       {
@@ -209,7 +253,7 @@ export class VocabularyAiService {
       },
     );
 
-    const items = await this.finalizeDrafts(userId, data.items, count);
+    const items = await this.finalizeDrafts(userId, data.items, count, lang);
     if (items.length === 0) {
       throw new BadGatewayException(
         'AI provider returned no usable vocabulary items',
@@ -229,19 +273,21 @@ export class VocabularyAiService {
     dto: AiExtractImageVocabularyDto,
   ): Promise<AiExtractImageVocabularyResult> {
     const dataUrl = this.validateAndEncodeImage(file);
+    const lang = normalizeLearningLanguage(dto.languageCode);
+    const langLabel = lang === 'ko' ? 'Korean' : 'English';
     const count = dto.count ?? DEFAULT_IMAGE_EXTRACT_COUNT;
     const { topicContext, avoidLine } = await this.resolveTopicContext(
       userId,
       dto.topicId,
     );
 
-    const levelLine = dto.level ? `\nTarget CEFR level: ${dto.level}` : '';
+    const levelLine = dto.level ? `\nTarget level: ${dto.level}` : '';
     const focusLine = dto.prompt?.trim()
       ? `\nLearner focus instruction: ${dto.prompt.trim()}`
       : '';
 
     const instructionText =
-      `Extract up to ${count} useful English vocabulary words or phrases from this image.` +
+      `Extract up to ${count} useful ${langLabel} vocabulary words or phrases from this image.` +
       `${levelLine}${topicContext}${avoidLine}${focusLine}`;
 
     const { model, data, usage } = await this.aiService.chatJson<{
@@ -249,7 +295,7 @@ export class VocabularyAiService {
       items?: unknown;
     }>(
       [
-        { role: 'system', content: IMAGE_EXTRACT_SYSTEM_PROMPT },
+        { role: 'system', content: getImageExtractSystemPrompt(lang) },
         {
           role: 'user',
           content: [
@@ -266,10 +312,10 @@ export class VocabularyAiService {
       },
     );
 
-    const items = await this.finalizeDrafts(userId, data.items, count);
+    const items = await this.finalizeDrafts(userId, data.items, count, lang);
     if (items.length === 0) {
       throw new BadRequestException(
-        'No English vocabulary could be extracted from this image. Try a clearer image or add a focus prompt.',
+        `No ${langLabel} vocabulary could be extracted from this image. Try a clearer image or add a focus prompt.`,
       );
     }
 
@@ -328,6 +374,7 @@ export class VocabularyAiService {
     userId: number,
     rawItemsInput: unknown,
     limit: number,
+    languageCode: LearningLanguageCode = 'en',
   ): Promise<AiVocabularyDraft[]> {
     const rawItems = Array.isArray(rawItemsInput)
       ? (rawItemsInput as RawAiVocabItem[])
@@ -352,6 +399,7 @@ export class VocabularyAiService {
     const existingSet = await this.vocabularyService.findExistingTermSet(
       userId,
       deduped.map((d) => d.term),
+      languageCode,
     );
 
     return deduped.map((draft) => ({

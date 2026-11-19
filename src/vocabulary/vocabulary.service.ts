@@ -5,6 +5,11 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
+import {
+  isSupportedLearningLanguage,
+  type LearningLanguageCode,
+  normalizeLearningLanguage,
+} from '../common/constants/learning-languages.js';
 import { PaginationMeta } from '../common/dto/pagination-query.dto.js';
 import { assertResourceOwnership } from '../common/guards/ownership.guard.js';
 import {
@@ -108,6 +113,7 @@ interface PreparedVocabularyDraft {
   example: string | null;
   notes: string | null;
   source: VocabularySource;
+  languageCode: LearningLanguageCode;
   topicIds: number[];
 }
 
@@ -142,6 +148,15 @@ export class VocabularyService {
     const qb = this.vocabularyRepository
       .createQueryBuilder('vocab')
       .where('vocab.userId = :userId', { userId });
+
+    if (query.languageCode) {
+      const language = await this.languagesService.findActiveByCode(
+        query.languageCode,
+      );
+      qb.andWhere('vocab.languageId = :languageId', {
+        languageId: language.id,
+      });
+    }
 
     if (query.topicId) {
       qb.innerJoin(
@@ -246,6 +261,7 @@ export class VocabularyService {
   async checkDuplicate(
     userId: number,
     term: string,
+    languageCode: LearningLanguageCode = 'en',
   ): Promise<{
     exists: boolean;
     matches: Array<{ id: number; term: string; definition: string }>;
@@ -255,7 +271,9 @@ export class VocabularyService {
       return { exists: false, matches: [] };
     }
 
-    const language = await this.languagesService.findActiveByCode('en');
+    const language = await this.languagesService.findActiveByCode(
+      normalizeLearningLanguage(languageCode),
+    );
     const matches = await this.vocabularyRepository
       .createQueryBuilder('vocab')
       .select(['vocab.id', 'vocab.term', 'vocab.definition'])
@@ -294,13 +312,19 @@ export class VocabularyService {
   ): Promise<CreateVocabularyResult> {
     const prepared = this.prepareDraft(dto);
     const newTopicName = this.normalizeOptional(dto.newTopicName);
-    const language = await this.languagesService.findActiveByCode('en');
+    const language = await this.languagesService.findActiveByCode(
+      prepared.languageCode,
+    );
     const ownedTopics = await this.topicsService.findOwnedTopicsByIds(
       userId,
       prepared.topicIds,
     );
 
-    const existingDup = await this.checkDuplicate(userId, prepared.term);
+    const existingDup = await this.checkDuplicate(
+      userId,
+      prepared.term,
+      prepared.languageCode,
+    );
 
     const { saved, allTopics } = await this.dataSource.transaction(
       async (manager) => {
@@ -345,11 +369,27 @@ export class VocabularyService {
   ): Promise<BulkCreateVocabularyResult> {
     const sharedTopicIds = dto.topicIds ?? [];
     const newTopicName = this.normalizeOptional(dto.newTopicName);
+    const bulkLangInput = dto.languageCode?.trim().toLowerCase();
+    if (bulkLangInput && !isSupportedLearningLanguage(bulkLangInput)) {
+      throw new BadRequestException(
+        'Supported languages are English (en) and Korean (ko)',
+      );
+    }
     const preparedList = dto.items.map((item) =>
-      this.prepareDraft(item, sharedTopicIds),
+      this.prepareDraft(
+        {
+          ...item,
+          languageCode: item.languageCode ?? bulkLangInput ?? 'en',
+        },
+        sharedTopicIds,
+      ),
     );
 
-    const language = await this.languagesService.findActiveByCode('en');
+    const bulkLanguageCode = normalizeLearningLanguage(
+      bulkLangInput ?? preparedList[0]?.languageCode ?? 'en',
+    );
+    const language =
+      await this.languagesService.findActiveByCode(bulkLanguageCode);
     const allTopicIds = Array.from(
       new Set(preparedList.flatMap((item) => item.topicIds)),
     );
@@ -362,6 +402,7 @@ export class VocabularyService {
     const existingTerms = await this.findExistingTermSet(
       userId,
       preparedList.map((item) => item.term),
+      bulkLanguageCode,
     );
 
     const { savedRows, createdTopic } = await this.dataSource.transaction(
@@ -436,6 +477,7 @@ export class VocabularyService {
   async findExistingTermSet(
     userId: number,
     terms: string[],
+    languageCode: LearningLanguageCode = 'en',
   ): Promise<Set<string>> {
     const normalized = Array.from(
       new Set(terms.map((t) => t.trim().toLowerCase()).filter(Boolean)),
@@ -444,7 +486,9 @@ export class VocabularyService {
       return new Set();
     }
 
-    const language = await this.languagesService.findActiveByCode('en');
+    const language = await this.languagesService.findActiveByCode(
+      normalizeLearningLanguage(languageCode),
+    );
     const rows = await this.vocabularyRepository
       .createQueryBuilder('vocab')
       .select('LOWER(TRIM(vocab.term))', 'normalizedTerm')
@@ -643,9 +687,9 @@ export class VocabularyService {
     }
 
     const code = (dto.languageCode ?? 'en').trim().toLowerCase();
-    if (code !== 'en') {
+    if (!isSupportedLearningLanguage(code)) {
       throw new BadRequestException(
-        'MVP currently only supports English (en) vocabulary',
+        'Supported languages are English (en) and Korean (ko)',
       );
     }
 
@@ -657,6 +701,7 @@ export class VocabularyService {
       example: this.normalizeOptional(dto.example),
       notes: this.normalizeOptional(dto.notes),
       source: dto.source ?? VocabularySource.MANUAL,
+      languageCode: code,
       topicIds: Array.from(
         new Set([...(dto.topicIds ?? []), ...extraTopicIds]),
       ),

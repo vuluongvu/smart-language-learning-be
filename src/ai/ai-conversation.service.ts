@@ -6,6 +6,11 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
+import {
+  getLearningLanguageDisplayName,
+  type LearningLanguageCode,
+  normalizeLearningLanguage,
+} from '../common/constants/learning-languages.js';
 import { assertResourceOwnership } from '../common/guards/ownership.guard.js';
 import { AiMessage, AiService } from './ai.service.js';
 import {
@@ -42,6 +47,7 @@ export interface AiConversationTurnView {
 
 export interface AiConversationSessionSummaryView {
   id: number;
+  languageCode: LearningLanguageCode;
   topic: string;
   level: ConversationLevel;
   explanationLang: ExplanationLanguage;
@@ -100,9 +106,10 @@ export class AiConversationService {
 
   async listSessions(
     userId: number,
+    languageCode?: LearningLanguageCode,
   ): Promise<AiConversationSessionSummaryView[]> {
     const rows = await this.sessionRepo.find({
-      where: { userId },
+      where: languageCode ? { userId, languageCode } : { userId },
       order: { updatedAt: 'DESC', id: 'DESC' },
       take: 20,
     });
@@ -128,21 +135,27 @@ export class AiConversationService {
     }
     const level: ConversationLevel = dto.level ?? 'B1';
     const explanationLang: ExplanationLanguage = dto.explanationLang ?? 'vi';
+    const languageCode = normalizeLearningLanguage(dto.languageCode);
+    const targetLangName = getLearningLanguageDisplayName(languageCode);
+    const koreanScriptHint =
+      languageCode === 'ko'
+        ? ' Use natural Korean Hangul in polite -아요/-어요 style suitable for learners.'
+        : '';
 
     const { data } = await this.aiService.chatJson<RawOpeningResponse>(
       [
         {
           role: 'system',
           content:
-            'You are a friendly English conversation coach starting a guided 1-on-1 practice session. ' +
+            `You are a friendly ${targetLangName} conversation coach starting a guided 1-on-1 practice session. ` +
             'Return ONLY valid JSON with exact keys: {"greeting":"...","openingQuestion":"..."}. ' +
-            'Rules: Both fields MUST be written in natural English calibrated strictly to the requested CEFR level. ' +
+            `Rules: Both fields MUST be written in natural ${targetLangName} calibrated strictly to the requested CEFR level.${koreanScriptHint} ` +
             'greeting: 1 short warm sentence welcoming the learner to the scenario. ' +
-            'openingQuestion: 1 clear, inviting first English question directly on the topic to get them speaking.',
+            `openingQuestion: 1 clear, inviting first ${targetLangName} question directly on the topic to get them speaking.`,
         },
         {
           role: 'user',
-          content: `Topic: "${topic}"\nTarget CEFR level: ${level}\nGenerate the opening greeting and first English question.`,
+          content: `Topic: "${topic}"\nTarget CEFR level: ${level}\nGenerate the opening greeting and first ${targetLangName} question.`,
         },
       ],
       { temperature: 0.7, maxTokens: 220 },
@@ -155,6 +168,7 @@ export class AiConversationService {
         AiConversationSession,
         manager.create(AiConversationSession, {
           userId,
+          languageCode,
           topic,
           level,
           explanationLang,
@@ -283,8 +297,11 @@ export class AiConversationService {
     const answeredTurns = turns.filter((t) => t.userAnswer !== null);
     let summary: ConversationSummary;
 
+    const targetLang = normalizeLearningLanguage(session.languageCode);
+    const targetLangName = getLearningLanguageDisplayName(targetLang);
+
     if (answeredTurns.length === 0) {
-      summary = this.emptySessionSummary(session.explanationLang);
+      summary = this.emptySessionSummary(session.explanationLang, targetLang);
     } else {
       const languageName =
         session.explanationLang === 'en' ? 'English' : 'Vietnamese';
@@ -303,11 +320,11 @@ export class AiConversationService {
           {
             role: 'system',
             content:
-              `Summarize this English practice session concisely. Return ONLY valid JSON: ` +
+              `Summarize this ${targetLangName} practice session concisely. Return ONLY valid JSON: ` +
               `{"overallRemark":"...","commonMistakes":[{"pattern":"...","example":"...","suggestion":"..."}],` +
               `"newVocabulary":[{"term":"...","partOfSpeech":"noun|verb|adjective|adverb|phrase|null","definition":"...","example":"..."}],` +
               `"improvementTips":["..."]}. ` +
-              `Write overallRemark, commonMistakes[].pattern/suggestion, newVocabulary[].definition, improvementTips[] in ${languageName}; examples & terms in English.`,
+              `Write overallRemark, commonMistakes[].pattern/suggestion, newVocabulary[].definition, improvementTips[] in ${languageName}; examples & terms in ${targetLangName}.`,
           },
           {
             role: 'user',
@@ -377,24 +394,31 @@ export class AiConversationService {
       )
       .join('\n\n');
 
+    const targetLang = normalizeLearningLanguage(session.languageCode);
+    const targetLangName = getLearningLanguageDisplayName(targetLang);
+    const koreanRule =
+      targetLang === 'ko'
+        ? ' Use Hangul in polite Korean (-아요/-어요 or appropriate honorifics) and check particles/conjugation/spacing.'
+        : '';
+
     const speechNote = isVoiceInput
       ? '\n- Input is from speech-to-text: focus on spoken grammar/word choice and ignore punctuation artifacts.'
       : '';
 
     const systemPrompt =
-      `You are an English conversation coach. Topic: "${session.topic}" | Level: ${session.level} | Explain in: ${explanationLanguageName}.\n` +
+      `You are a ${targetLangName} conversation coach. Topic: "${session.topic}" | Level: ${session.level} | Explain in: ${explanationLanguageName}.\n` +
       `Return ONLY valid JSON:\n` +
       `{\n` +
       `  "appropriateness": "great" | "good" | "needs_work",\n` +
       `  "assessment": "State clearly if the reply is correct/natural or has mistakes + brief evaluation in ${explanationLanguageName}",\n` +
       `  "notableErrors": [{"original":"...","correction":"...","category":"grammar|vocabulary|phrasing|tone","reason":"concise reason in ${explanationLanguageName}"}],\n` +
-      `  "improvedVersion": "natural English rewrite at ${session.level}",\n` +
+      `  "improvedVersion": "natural ${targetLangName} rewrite at ${session.level}",\n` +
       `  "explanation": "concise Markdown tips (**bold**, numbered points separated by newlines) in ${explanationLanguageName}",\n` +
-      `  "suggestedWords": [{"term":"word/phrase","partOfSpeech":"noun|verb|adjective|adverb|phrase|null","definition":"meaning in ${explanationLanguageName}","example":"short English example"}],\n` +
-      `  "followUpReaction": "1 warm English reaction sentence to the reply",\n` +
-      `  "nextQuestion": "1 connected English follow-up question building on the reply (stay on topic)"\n` +
+      `  "suggestedWords": [{"term":"word/phrase in ${targetLangName}","partOfSpeech":"noun|verb|adjective|adverb|phrase|null","definition":"meaning in ${explanationLanguageName}","example":"short ${targetLangName} example"}],\n` +
+      `  "followUpReaction": "1 warm ${targetLangName} reaction sentence to the reply",\n` +
+      `  "nextQuestion": "1 connected ${targetLangName} follow-up question building on the reply (stay on topic)"\n` +
       `}\n` +
-      `Rules: Keep notableErrors <= 3 items ([] if none) and suggestedWords <= 3 items. Write improvedVersion, followUpReaction, nextQuestion in ${session.level} English.${speechNote}`;
+      `Rules: Keep notableErrors <= 3 items ([] if none) and suggestedWords <= 3 items. Write improvedVersion, followUpReaction, nextQuestion in ${session.level} ${targetLangName}.${koreanRule}${speechNote}`;
 
     const userContent =
       (priorHistory ? `Previous turns:\n${priorHistory}\n\n` : '') +
@@ -549,18 +573,23 @@ export class AiConversationService {
     return items;
   }
 
-  private emptySessionSummary(lang: ExplanationLanguage): ConversationSummary {
+  private emptySessionSummary(
+    lang: ExplanationLanguage,
+    languageCode: LearningLanguageCode = 'en',
+  ): ConversationSummary {
+    const viTarget = languageCode === 'ko' ? 'tiếng Hàn' : 'tiếng Anh';
+    const enTarget = languageCode === 'ko' ? 'Korean' : 'English';
     return {
       overallRemark:
         lang === 'vi'
-          ? 'Phiên hội thoại đã kết thúc trước khi bạn gửi câu trả lời đầu tiên. Hãy bắt đầu phiên mới và thử trả lời bằng tiếng Anh nhé.'
-          : 'This session ended before any English reply was submitted. Start a new session whenever you are ready to practice!',
+          ? `Phiên hội thoại đã kết thúc trước khi bạn gửi câu trả lời đầu tiên. Hãy bắt đầu phiên mới và thử trả lời bằng ${viTarget} nhé.`
+          : `This session ended before any ${enTarget} reply was submitted. Start a new session whenever you are ready to practice!`,
       commonMistakes: [],
       newVocabulary: [],
       improvementTips: [
         lang === 'vi'
-          ? 'Thử viết 2–3 câu tiếng Anh ngắn gọn cho câu hỏi đầu tiên ở phiên tiếp theo.'
-          : 'Try answering the opening question with 2–3 short English sentences in your next session.',
+          ? `Thử viết 2–3 câu ${viTarget} ngắn gọn cho câu hỏi đầu tiên ở phiên tiếp theo.`
+          : `Try answering the opening question with 2–3 short ${enTarget} sentences in your next session.`,
       ],
     };
   }
@@ -595,6 +624,7 @@ export class AiConversationService {
   ): AiConversationSessionSummaryView {
     return {
       id: row.id,
+      languageCode: normalizeLearningLanguage(row.languageCode),
       topic: row.topic,
       level: row.level,
       explanationLang: row.explanationLang,

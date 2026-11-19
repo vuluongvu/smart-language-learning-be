@@ -16,6 +16,7 @@ import {
   EvaluateUnitWritingDto,
   GenerateAiLearningPathDto,
   GenerateUnitStudyGuideDto,
+  LearningPathOverviewQueryDto,
   RegenerateAiUnitDto,
   SaveUnitWordsDto,
   StartUnitSpeakingDto,
@@ -37,9 +38,13 @@ export class LearningPathController {
   })
   getOverview(
     @CurrentUser('userId') userId: number,
-    @Query('band') band?: string,
+    @Query() query: LearningPathOverviewQueryDto,
   ) {
-    return this.learningPathService.getOverview(userId, band);
+    return this.learningPathService.getOverview(
+      userId,
+      query.band,
+      query.languageCode,
+    );
   }
 
   @Patch('goal')

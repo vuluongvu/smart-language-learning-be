@@ -265,4 +265,33 @@ describe('VocabularyAiService', () => {
       ),
     ).rejects.toThrow(BadRequestException);
   });
+
+  it('enriches Korean Hangul vocabulary with bilingual Korean-Vietnamese prompts', async () => {
+    aiService.chatJson.mockResolvedValue({
+      model: 'qwen/qwen3.8-27b',
+      data: {
+        term: '감사합니다',
+        pronunciation: '[감ː사함니다 / gamsahamnida]',
+        partOfSpeech: 'phrase',
+        definition: 'cảm ơn (trang trọng)',
+        example: '도와주셔서 정말 감사합니다.',
+        notes: 'Dùng trong bối cảnh lịch sự, trang trọng.',
+      },
+    });
+
+    const result = await service.enrichTerm(5, {
+      term: '감사합니다',
+      languageCode: 'ko',
+    });
+
+    expect(result.item.term).toBe('감사합니다');
+    expect(vocabularyService.checkDuplicate).toHaveBeenCalledWith(
+      5,
+      '감사합니다',
+      'ko',
+    );
+    const [messages] = aiService.chatJson.mock.calls[0];
+    expect(messages[0].content).toContain('Korean-Vietnamese');
+    expect(messages[1].content).toContain('Korean term:');
+  });
 });

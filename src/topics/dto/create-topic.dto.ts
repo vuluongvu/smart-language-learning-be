@@ -1,4 +1,14 @@
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsIn,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
+import {
+  type LearningLanguageCode,
+  SUPPORTED_LEARNING_LANGUAGES,
+} from '../../common/constants/learning-languages.js';
 
 export class CreateTopicDto {
   @IsString()
@@ -12,7 +22,6 @@ export class CreateTopicDto {
   description?: string | null;
 
   @IsOptional()
-  @IsString()
-  @MaxLength(16)
-  languageCode?: string;
+  @IsIn(SUPPORTED_LEARNING_LANGUAGES)
+  languageCode?: LearningLanguageCode | string;
 }

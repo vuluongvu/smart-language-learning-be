@@ -1,7 +1,10 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
-import { ProgressHistoryQueryDto } from './dto/progress-history-query.dto.js';
+import {
+  ProgressHistoryQueryDto,
+  ProgressOverviewQueryDto,
+} from './dto/progress-history-query.dto.js';
 import { ProgressService } from './progress.service.js';
 
 @ApiTags('Progress & Analytics')
@@ -15,8 +18,11 @@ export class ProgressController {
     summary:
       'Get real learner progress metrics, active streak summary, weak words, and recent quiz attempts',
   })
-  getOverview(@CurrentUser('userId') userId: number) {
-    return this.progressService.getOverview(userId);
+  getOverview(
+    @CurrentUser('userId') userId: number,
+    @Query() query: ProgressOverviewQueryDto,
+  ) {
+    return this.progressService.getOverview(userId, query);
   }
 
   @Get('history')

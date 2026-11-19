@@ -5,6 +5,7 @@ import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -13,6 +14,10 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import {
+  type LearningLanguageCode,
+  SUPPORTED_LEARNING_LANGUAGES,
+} from '../../common/constants/learning-languages.js';
 import {
   QuestionType,
   QuizDifficulty,
@@ -74,6 +79,10 @@ export class CreateQuizDto {
   @IsString()
   @MaxLength(5000)
   description?: string | null;
+
+  @IsOptional()
+  @IsIn(SUPPORTED_LEARNING_LANGUAGES)
+  languageCode?: LearningLanguageCode;
 
   @IsOptional()
   @Type(() => Number)

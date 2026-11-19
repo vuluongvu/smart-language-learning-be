@@ -131,18 +131,52 @@ describe('VocabularyService', () => {
     expect(created.existingMatchCount).toBe(1);
   });
 
-  it('rejects empty trimmed term or non-English language', async () => {
+  it('rejects empty trimmed term or unsupported language while supporting English and Korean', async () => {
     await expect(
       service.create(10, { term: '   ', definition: 'meaning' }),
     ).rejects.toThrow(BadRequestException);
 
     await expect(
       service.create(10, {
-        term: 'hello',
+        term: 'bonjour',
         definition: 'greeting',
-        languageCode: 'ko',
+        languageCode: 'fr',
       }),
     ).rejects.toThrow(BadRequestException);
+
+    languagesService.findActiveByCode.mockResolvedValue({
+      id: 2,
+      code: 'ko',
+      name: 'Korean',
+    });
+    const txVocabRepo = {
+      create: vi.fn((x) => ({
+        id: 55,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...x,
+      })),
+      save: vi.fn(async (x) => x),
+    };
+    const txTvRepo = {
+      create: vi.fn((x) => x),
+      save: vi.fn(async (x) => x),
+    };
+    dataSource.transaction.mockImplementation(async (cb) =>
+      cb({
+        getRepository: (entity: unknown) =>
+          entity === VocabularyItem ? txVocabRepo : txTvRepo,
+      }),
+    );
+
+    const createdKo = await service.create(10, {
+      term: '안녕하세요',
+      pronunciation: '[annyeonghaseyo]',
+      definition: 'xin chào',
+      languageCode: 'ko',
+    });
+    expect(createdKo.languageId).toBe(2);
+    expect(createdKo.term).toBe('안녕하세요');
   });
 
   it('rejects accessing another user vocabulary item', async () => {

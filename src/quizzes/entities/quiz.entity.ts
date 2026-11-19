@@ -14,6 +14,7 @@ import { QuizDifficulty, QuizStatus } from './quiz.enums.js';
 
 @Entity({ name: 'quizzes' })
 @Index('IDX_quizzes_user_status', ['userId', 'status'])
+@Index('IDX_quizzes_user_language', ['userId', 'languageCode'])
 @Index('IDX_quizzes_topic_id', ['topicId'])
 export class Quiz {
   @PrimaryGeneratedColumn()
@@ -32,6 +33,9 @@ export class Quiz {
   @ManyToOne(() => Topic, { onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'topic_id' })
   topic: Topic | null;
+
+  @Column({ name: 'language_code', type: 'varchar', length: 16, default: 'en' })
+  languageCode: string;
 
   @Column({ type: 'varchar', length: 160 })
   title: string;
