@@ -23,7 +23,12 @@ import {
   type LearningLanguageCode,
   normalizeLearningLanguage,
 } from '../common/constants/learning-languages.js';
+import { type UploadedImageInput } from '../common/utils/image-upload.util.js';
 import { AiConversationService } from './ai-conversation.service.js';
+import {
+  AiHandwritingService,
+  MAX_HANDWRITING_IMAGE_BYTES,
+} from './ai-handwriting.service.js';
 import { AiMessage, AiService, type UploadedAudioInput } from './ai.service.js';
 import { ChatDto } from './dto/chat.dto.js';
 import {
@@ -31,6 +36,7 @@ import {
   ReplyConversationDto,
   StartConversationDto,
 } from './dto/conversation.dto.js';
+import { RecognizeHandwritingDto } from './dto/handwriting.dto.js';
 
 const ENGLISH_TUTOR_SYSTEM_PROMPT =
   'You are a friendly English tutor in a language-learning app. ' +
@@ -58,6 +64,7 @@ export class AiController {
   constructor(
     private readonly aiService: AiService,
     private readonly conversationService: AiConversationService,
+    private readonly handwritingService: AiHandwritingService,
   ) {}
 
   @Get('status')
@@ -175,5 +182,24 @@ export class AiController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.conversationService.endSession(userId, id);
+  }
+
+  @Post('handwriting/recognize')
+  @Throttle({ default: { limit: 25, ttl: 60_000 } })
+  @UseInterceptors(
+    FileInterceptor('image', {
+      limits: { fileSize: MAX_HANDWRITING_IMAGE_BYTES },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary:
+      'Recognize or evaluate handwritten Korean Hangul from a canvas image via AI vision',
+  })
+  recognizeHandwriting(
+    @UploadedFile() image: UploadedImageInput | undefined,
+    @Body() dto: RecognizeHandwritingDto,
+  ) {
+    return this.handwritingService.recognizeHandwriting(image, dto);
   }
 }
