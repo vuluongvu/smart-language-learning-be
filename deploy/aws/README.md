@@ -64,8 +64,8 @@ The root `Dockerfile` is a multi-stage production image (`node:24-alpine`) that 
    docker build --platform linux/amd64 -t <account-id>.dkr.ecr.<region>.amazonaws.com/argon-learning-be:staging .
    docker push <account-id>.dkr.ecr.<region>.amazonaws.com/argon-learning-be:staging
    ```
-2. Configure App Runner / ECS Task environment variables matching `.env.aws.example` (`NODE_ENV=production`, `DB_SSL=true`, `CORS_ORIGIN=https://<your-app>.vercel.app`, `JWT_SECRET`, `JWT_REFRESH_SECRET`, `GROQ_API_KEY`, optional `GOOGLE_CLIENT_ID`).
-3. Point health check path to `/api/v1/health` (HTTP `200`).
+2. Configure App Runner / ECS Task environment variables matching `.env.aws.example` (`NODE_ENV=production`, `DB_SSL=true`, `CORS_ORIGIN=https://<your-app>.vercel.app`, `JWT_SECRET`, `JWT_REFRESH_SECRET`, `GROQ_API_KEY`, `GROQ_MODEL=openai/gpt-oss-120b`, `GROQ_FALLBACK_MODELS=openai/gpt-oss-20b,qwen/qwen3.8-27b`, optional `GOOGLE_CLIENT_ID`).
+3. Point health check path to `/api/v1/health` (HTTP `200`). If putting an AWS ALB or CloudFront distribution in front of EC2/ECS, keep idle/origin response timeout at `60s` or higher so multi-unit AI learning path generation completes cleanly.
 
 ---
 

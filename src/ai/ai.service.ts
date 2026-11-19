@@ -22,12 +22,17 @@ export interface AiMessage {
   content: AiMessageContent;
 }
 
+export type AiReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'default';
+export type AiReasoningFormat = 'parsed' | 'hidden' | 'raw';
+
 export interface AiChatOptions {
   temperature?: number;
   maxTokens?: number;
   jsonMode?: boolean;
   vision?: boolean;
   timeoutMs?: number;
+  reasoningEffort?: AiReasoningEffort;
+  reasoningFormat?: AiReasoningFormat;
 }
 
 export interface AiTokenUsage {
@@ -44,12 +49,20 @@ export interface AiChatResult {
 
 interface GroqChatResponse {
   model: string;
-  choices: { message: { role: string; content: string | null } }[];
+  choices: {
+    message: { role: string; content: string | null };
+    finish_reason?: string | null;
+  }[];
   usage?: {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
   };
+}
+
+interface ChatPayloadOverrides {
+  omitReasoning?: boolean;
+  omitResponseFormat?: boolean;
 }
 
 export const DEFAULT_GROQ_MODEL = 'qwen/qwen3.8-27b';
@@ -176,6 +189,37 @@ export class AiService {
     messages: AiMessage[],
     options: AiChatOptions = {},
   ): Promise<AiChatResult> {
+    return this.executeChatWithFailover(messages, options, (raw) => raw);
+  }
+
+  async chatJson<T extends object>(
+    messages: AiMessage[],
+    options: Omit<AiChatOptions, 'jsonMode'> = {},
+  ): Promise<{ model: string; data: T; usage?: AiChatResult['usage'] }> {
+    return this.executeChatWithFailover(
+      messages,
+      { ...options, jsonMode: true },
+      (raw) => {
+        const data = this.parseJsonObjectResponse<T>(raw.content);
+        if (!data) {
+          return null;
+        }
+        return {
+          model: raw.model,
+          data,
+          ...(raw.usage ? { usage: raw.usage } : {}),
+        };
+      },
+      'AI provider returned invalid JSON',
+    );
+  }
+
+  private async executeChatWithFailover<T>(
+    messages: AiMessage[],
+    options: AiChatOptions,
+    transform: (raw: AiChatResult, finishReason?: string | null) => T | null,
+    invalidResultMessage = 'AI provider returned an unexpected error',
+  ): Promise<T> {
     if (!this.isEnabled()) {
       throw new ServiceUnavailableException(
         'AI provider is disabled. Set AI_PROVIDER=groq and GROQ_API_KEY.',
@@ -195,9 +239,18 @@ export class AiService {
       );
     }
 
+    let lastFailure: {
+      status: number;
+      detail: string;
+      response?: Response;
+    } | null = null;
+    let sawUnreachable = false;
+    let sawInvalidTransform = false;
+
     for (let idx = 0; idx < selection.available.length; idx += 1) {
       const candidateModel = selection.available[idx];
-      const response = await this.sendChatRequest(
+      const hasMoreCandidates = idx < selection.available.length - 1;
+      const attemptResult = await this.attemptCandidateChat(
         baseUrl,
         apiKey,
         candidateModel,
@@ -205,48 +258,231 @@ export class AiService {
         options,
       );
 
-      if (response.ok) {
-        const data = (await response.json()) as GroqChatResponse;
-        const content = data.choices?.[0]?.message?.content ?? '';
-
-        return {
-          model: data.model || candidateModel,
-          content,
-          usage: data.usage && {
-            promptTokens: data.usage.prompt_tokens,
-            completionTokens: data.usage.completion_tokens,
-            totalTokens: data.usage.total_tokens,
-          },
-        };
-      }
-
-      const isFailoverStatus =
-        response.status === HttpStatus.TOO_MANY_REQUESTS ||
-        response.status === HttpStatus.SERVICE_UNAVAILABLE;
-
-      if (isFailoverStatus) {
-        const cooldownMs = this.computeCooldownMs(response);
-        this.markModelUnavailable(candidateModel, cooldownMs, response.status);
-        if (idx < selection.available.length - 1) {
+      if (attemptResult.kind === 'unreachable') {
+        sawUnreachable = true;
+        this.markModelUnavailable(candidateModel, 15_000, 504);
+        if (hasMoreCandidates) {
           continue;
         }
-        const postExhaust = this.selectAvailableModels(Date.now(), isVision);
-        await this.throwProviderError(
-          'Groq API error',
-          'AI provider returned an error',
-          response,
-          postExhaust.retryAfterSeconds,
+        throw new BadGatewayException('AI provider is unreachable');
+      }
+
+      if (attemptResult.kind === 'ok') {
+        const { result, finishReason } = attemptResult;
+        const transformed = transform(result, finishReason);
+        if (transformed !== null) {
+          return transformed;
+        }
+
+        sawInvalidTransform = true;
+        this.logger.warn(
+          `Model ${candidateModel} returned empty or invalid structured output (finish_reason=${finishReason ?? 'unknown'})`,
+        );
+
+        // If structured json_object mode returned empty/truncated content on the final candidate,
+        // retry once without response_format before failing.
+        if (options.jsonMode && !hasMoreCandidates) {
+          const fallbackAttempt = await this.attemptCandidateChat(
+            baseUrl,
+            apiKey,
+            candidateModel,
+            messages,
+            options,
+            { omitResponseFormat: true },
+          );
+          if (fallbackAttempt.kind === 'ok') {
+            const retried = transform(
+              fallbackAttempt.result,
+              fallbackAttempt.finishReason,
+            );
+            if (retried !== null) {
+              return retried;
+            }
+          }
+        }
+
+        if (hasMoreCandidates) {
+          continue;
+        }
+        throw new BadGatewayException(invalidResultMessage);
+      }
+
+      const { status, detail, response } = attemptResult;
+      lastFailure = { status, detail, response };
+
+      if (
+        status === HttpStatus.BAD_REQUEST &&
+        detail.toLowerCase().includes('image')
+      ) {
+        throw new BadRequestException(
+          'Unable to read the uploaded image. Please use a clear PNG, JPEG, WebP, or GIF image.',
         );
       }
 
-      await this.throwProviderError(
+      if (status === HttpStatus.UNAUTHORIZED) {
+        this.logger.error(`Groq API error ${status}: ${detail}`);
+        throw new BadGatewayException(
+          'AI provider authentication failed (401). Verify GROQ_API_KEY.',
+        );
+      }
+
+      if (status === HttpStatus.FORBIDDEN) {
+        const lowerDetail = detail.toLowerCase();
+        const cfRay = response.headers?.get?.('cf-ray');
+        this.logger.error(
+          `Groq API error 403${cfRay ? ` [cf-ray=${cfRay}]` : ''}: ${detail}`,
+        );
+        const isModelScoped =
+          lowerDetail.includes('model') &&
+          !lowerDetail.includes('network settings');
+        if (isModelScoped && hasMoreCandidates) {
+          this.markModelUnavailable(candidateModel, 300_000, status);
+          continue;
+        }
+        throw new BadGatewayException(
+          'AI provider denied this server request (403). Check AWS network/egress settings and GROQ_API_KEY permissions.',
+        );
+      }
+
+      const isJsonValidateFailure =
+        status === HttpStatus.BAD_REQUEST && this.isJsonValidationError(detail);
+      const isFailoverStatus =
+        status === HttpStatus.TOO_MANY_REQUESTS ||
+        status === HttpStatus.NOT_FOUND ||
+        status === HttpStatus.REQUEST_TIMEOUT ||
+        status >= HttpStatus.INTERNAL_SERVER_ERROR ||
+        isJsonValidateFailure;
+
+      if (isFailoverStatus) {
+        const cooldownMs =
+          status === HttpStatus.NOT_FOUND
+            ? MAX_COOLDOWN_MS
+            : isJsonValidateFailure
+              ? 10_000
+              : this.computeCooldownMs(response, detail);
+        this.markModelUnavailable(candidateModel, cooldownMs, status);
+        if (hasMoreCandidates) {
+          continue;
+        }
+
+        if (status === HttpStatus.TOO_MANY_REQUESTS) {
+          const postExhaust = this.selectAvailableModels(Date.now(), isVision);
+          this.throwMappedProviderError(
+            'Groq API error',
+            'AI provider returned an error',
+            status,
+            detail,
+            response,
+            postExhaust.retryAfterSeconds,
+          );
+        }
+      }
+
+      this.throwMappedProviderError(
         'Groq API error',
         'AI provider returned an error',
+        status,
+        detail,
         response,
       );
     }
 
+    if (lastFailure) {
+      this.throwMappedProviderError(
+        'Groq API error',
+        'AI provider returned an error',
+        lastFailure.status,
+        lastFailure.detail,
+        lastFailure.response,
+      );
+    }
+
+    if (sawInvalidTransform) {
+      throw new BadGatewayException(invalidResultMessage);
+    }
+    if (sawUnreachable) {
+      throw new BadGatewayException('AI provider is unreachable');
+    }
+
     throw new BadGatewayException('AI provider returned an unexpected error');
+  }
+
+  private async attemptCandidateChat(
+    baseUrl: string,
+    apiKey: string,
+    model: string,
+    messages: AiMessage[],
+    options: AiChatOptions,
+    initialOverrides: ChatPayloadOverrides = {},
+  ): Promise<
+    | { kind: 'ok'; result: AiChatResult; finishReason?: string | null }
+    | { kind: 'unreachable' }
+    | { kind: 'http_error'; status: number; detail: string; response: Response }
+  > {
+    let overrides: ChatPayloadOverrides = { ...initialOverrides };
+
+    for (let retry = 0; retry < 2; retry += 1) {
+      const response = await this.sendChatRequest(
+        baseUrl,
+        apiKey,
+        model,
+        messages,
+        options,
+        overrides,
+      );
+      if (!response) {
+        return { kind: 'unreachable' };
+      }
+
+      if (response.ok) {
+        const data = (await response.json()) as GroqChatResponse;
+        const choice = data.choices?.[0];
+        const content = choice?.message?.content ?? '';
+        return {
+          kind: 'ok',
+          finishReason: choice?.finish_reason,
+          result: {
+            model: data.model || model,
+            content,
+            usage: data.usage && {
+              promptTokens: data.usage.prompt_tokens,
+              completionTokens: data.usage.completion_tokens,
+              totalTokens: data.usage.total_tokens,
+            },
+          },
+        };
+      }
+
+      const detail = await response.text().catch(() => '');
+
+      // Retry same candidate without reasoning fields if provider rejects reasoning_* params.
+      if (
+        response.status === HttpStatus.BAD_REQUEST &&
+        !overrides.omitReasoning &&
+        this.isUnsupportedReasoningError(detail)
+      ) {
+        this.logger.warn(
+          `Model ${model} rejected reasoning parameters; retrying without reasoning hints`,
+        );
+        overrides = { ...overrides, omitReasoning: true };
+        continue;
+      }
+
+      // Retry same candidate once without response_format if Groq's JSON validator failed on it.
+      if (
+        response.status === HttpStatus.BAD_REQUEST &&
+        options.jsonMode &&
+        !overrides.omitResponseFormat &&
+        this.isJsonValidationError(detail)
+      ) {
+        overrides = { ...overrides, omitResponseFormat: true };
+        continue;
+      }
+
+      return { kind: 'http_error', status: response.status, detail, response };
+    }
+
+    return { kind: 'unreachable' };
   }
 
   private async sendChatRequest(
@@ -255,43 +491,173 @@ export class AiService {
     model: string,
     messages: AiMessage[],
     options: AiChatOptions,
-  ): Promise<Response> {
+    overrides: ChatPayloadOverrides = {},
+  ): Promise<Response | null> {
     const timeoutMs =
       options.timeoutMs ??
       (options.vision ? VISION_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
     try {
+      const body = this.buildChatPayload(model, messages, options, overrides);
       return await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          model,
-          messages,
-          temperature: options.temperature ?? 0.7,
-          max_tokens: options.maxTokens ?? DEFAULT_CHAT_MAX_TOKENS,
-          ...(options.jsonMode
-            ? { response_format: { type: 'json_object' } }
-            : {}),
-        }),
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
-      this.logger.error(`Groq request failed: ${(error as Error).message}`);
-      throw new BadGatewayException('AI provider is unreachable');
+      this.logger.error(
+        `Groq request failed (${model}): ${(error as Error).message}`,
+      );
+      return null;
     }
   }
 
-  private computeCooldownMs(response: Response): number {
-    const retryAfterRaw = response.headers?.get?.('retry-after');
-    const retrySec = retryAfterRaw ? Number(retryAfterRaw) : NaN;
-    if (Number.isFinite(retrySec) && retrySec > 0) {
-      return Math.min(
-        MAX_COOLDOWN_MS,
-        Math.max(5_000, Math.ceil(retrySec * 1000)),
-      );
+  private buildChatPayload(
+    model: string,
+    messages: AiMessage[],
+    options: AiChatOptions,
+    overrides: ChatPayloadOverrides = {},
+  ): Record<string, unknown> {
+    const payload: Record<string, unknown> = {
+      model,
+      messages,
+      temperature: options.temperature ?? 0.7,
+      max_tokens: options.maxTokens ?? DEFAULT_CHAT_MAX_TOKENS,
+    };
+
+    if (options.jsonMode && !overrides.omitResponseFormat) {
+      payload.response_format = { type: 'json_object' };
     }
+
+    if (!overrides.omitReasoning) {
+      const lowerModel = model.toLowerCase();
+      if (lowerModel.startsWith('openai/gpt-oss-')) {
+        if (options.reasoningEffort || (options.jsonMode && !options.vision)) {
+          payload.reasoning_effort =
+            options.reasoningEffort && options.reasoningEffort !== 'default'
+              ? options.reasoningEffort
+              : 'low';
+          payload.reasoning_format = options.reasoningFormat ?? 'parsed';
+        }
+      } else if (lowerModel.startsWith('qwen/')) {
+        if (options.reasoningEffort && options.reasoningEffort !== 'default') {
+          payload.reasoning_effort = options.reasoningEffort;
+        } else if (options.jsonMode && !options.vision) {
+          payload.reasoning_effort = 'none';
+        }
+        if (options.reasoningFormat) {
+          payload.reasoning_format = options.reasoningFormat;
+        }
+      } else if (
+        options.reasoningEffort &&
+        options.reasoningEffort !== 'default'
+      ) {
+        payload.reasoning_effort = options.reasoningEffort;
+        if (options.reasoningFormat) {
+          payload.reasoning_format = options.reasoningFormat;
+        }
+      }
+    }
+
+    return payload;
+  }
+
+  private isJsonValidationError(detail: string): boolean {
+    const lower = detail.toLowerCase();
+    return (
+      lower.includes('json_validate_failed') ||
+      lower.includes('failed to generate json') ||
+      lower.includes('failed to validate json')
+    );
+  }
+
+  private isUnsupportedReasoningError(detail: string): boolean {
+    const lower = detail.toLowerCase();
+    return (
+      lower.includes('reasoning_effort') || lower.includes('reasoning_format')
+    );
+  }
+
+  private parseJsonObjectResponse<T extends object>(content: string): T | null {
+    let cleaned = content
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
+      .trim()
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/, '')
+      .trim();
+
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+    }
+
+    if (!cleaned) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(cleaned) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return null;
+      }
+      return parsed as T;
+    } catch {
+      return null;
+    }
+  }
+
+  private parseResetDurationMs(rawValue?: string | null): number | null {
+    if (!rawValue) return null;
+    const trimmed = rawValue.trim();
+    if (!trimmed) return null;
+
+    if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
+      const secs = Number(trimmed);
+      return Number.isFinite(secs) && secs > 0 ? Math.ceil(secs * 1000) : null;
+    }
+
+    let totalMs = 0;
+    let matched = false;
+    for (const part of trimmed.matchAll(/(\d+(?:\.\d+)?)\s*(ms|m|s|h)/gi)) {
+      matched = true;
+      const num = Number(part[1]);
+      const unit = part[2].toLowerCase();
+      if (!Number.isFinite(num)) continue;
+      if (unit === 'h') totalMs += num * 3_600_000;
+      else if (unit === 'm') totalMs += num * 60_000;
+      else if (unit === 'ms') totalMs += num;
+      else totalMs += num * 1000;
+    }
+    return matched && totalMs > 0 ? Math.ceil(totalMs) : null;
+  }
+
+  private computeCooldownMs(response: Response, detail = ''): number {
+    const retryAfterMs = this.parseResetDurationMs(
+      response.headers?.get?.('retry-after'),
+    );
+    if (retryAfterMs !== null) {
+      return Math.min(MAX_COOLDOWN_MS, Math.max(5_000, retryAfterMs));
+    }
+
+    const tokenResetMs = this.parseResetDurationMs(
+      response.headers?.get?.('x-ratelimit-reset-tokens'),
+    );
+    if (tokenResetMs !== null) {
+      return Math.min(MAX_COOLDOWN_MS, Math.max(5_000, tokenResetMs));
+    }
+
+    const bodyMatch = detail.match(
+      /try again in\s+(\d+(?:\.\d+)?\s*(?:ms|s|m|h))/i,
+    );
+    const bodyResetMs = this.parseResetDurationMs(bodyMatch?.[1]);
+    if (bodyResetMs !== null) {
+      return Math.min(MAX_COOLDOWN_MS, Math.max(5_000, bodyResetMs));
+    }
+
     return response.status === HttpStatus.TOO_MANY_REQUESTS
       ? DEFAULT_COOLDOWN_MS
       : 15_000;
@@ -307,42 +673,6 @@ export class AiService {
     this.logger.warn(
       `Model ${model} hit HTTP ${statusCode}; switching fallback pool and cooling down for ${Math.ceil(cooldownMs / 1000)}s`,
     );
-  }
-
-  async chatJson<T extends object>(
-    messages: AiMessage[],
-    options: Omit<AiChatOptions, 'jsonMode'> = {},
-  ): Promise<{ model: string; data: T; usage?: AiChatResult['usage'] }> {
-    const result = await this.chat(messages, { ...options, jsonMode: true });
-    let cleaned = result.content
-      .replace(/<think>[\s\S]*?<\/think>/gi, '')
-      .trim()
-      .replace(/^```(?:json)?\s*/i, '')
-      .replace(/\s*```$/, '')
-      .trim();
-
-    const firstBrace = cleaned.indexOf('{');
-    const lastBrace = cleaned.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace > firstBrace) {
-      cleaned = cleaned.slice(firstBrace, lastBrace + 1);
-    }
-
-    try {
-      const parsed = JSON.parse(cleaned) as unknown;
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        throw new Error('Expected JSON object');
-      }
-      return {
-        model: result.model,
-        data: parsed as T,
-        usage: result.usage,
-      };
-    } catch (error) {
-      this.logger.error(
-        `Invalid JSON from AI provider: ${(error as Error).message}`,
-      );
-      throw new BadGatewayException('AI provider returned invalid JSON');
-    }
   }
 
   async transcribeAudio(
@@ -419,15 +749,35 @@ export class AiService {
     overrideWaitSeconds?: number,
   ): Promise<never> {
     const detail = await response.text().catch(() => '');
-    this.logger.error(`${logPrefix} ${response.status}: ${detail}`);
+    this.throwMappedProviderError(
+      logPrefix,
+      clientLabel,
+      response.status,
+      detail,
+      response,
+      overrideWaitSeconds,
+    );
+  }
 
-    if (response.status === HttpStatus.TOO_MANY_REQUESTS) {
-      const retryAfterRaw = response.headers?.get?.('retry-after');
+  private throwMappedProviderError(
+    logPrefix: string,
+    clientLabel: string,
+    status: number,
+    detail: string,
+    response?: Response,
+    overrideWaitSeconds?: number,
+  ): never {
+    this.logger.error(`${logPrefix} ${status}: ${detail}`);
+
+    if (status === HttpStatus.TOO_MANY_REQUESTS) {
+      const retryAfterMs = response
+        ? this.computeCooldownMs(response, detail)
+        : null;
       const retrySec =
         overrideWaitSeconds && overrideWaitSeconds > 0
           ? overrideWaitSeconds
-          : retryAfterRaw
-            ? Math.ceil(Number(retryAfterRaw))
+          : retryAfterMs !== null
+            ? Math.ceil(retryAfterMs / 1000)
             : NaN;
       const waitHint =
         Number.isFinite(retrySec) && retrySec > 0
@@ -440,7 +790,7 @@ export class AiService {
     }
 
     if (
-      response.status === HttpStatus.BAD_REQUEST &&
+      status === HttpStatus.BAD_REQUEST &&
       detail.toLowerCase().includes('image')
     ) {
       throw new BadRequestException(
@@ -448,6 +798,6 @@ export class AiService {
       );
     }
 
-    throw new BadGatewayException(`${clientLabel} (${response.status})`);
+    throw new BadGatewayException(`${clientLabel} (${status})`);
   }
 }

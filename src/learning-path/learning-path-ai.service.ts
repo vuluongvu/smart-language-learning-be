@@ -1,4 +1,12 @@
-import { BadGatewayException, Injectable } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { AiService } from '../ai/ai.service.js';
 import {
   getLearningLanguageDisplayName,
@@ -24,6 +32,7 @@ export interface AiUnitOutlineItem {
   icon: string;
   themeColor: string;
   speakingTopicPrompt: string;
+  targetKeywords?: string[];
 }
 
 export interface AiPathOutline {
@@ -69,7 +78,56 @@ const BAND_METADATA: Record<string, { bandLabel: string; targetCefr: string }> =
 
 @Injectable()
 export class LearningPathAiService {
+  private readonly logger = new Logger(LearningPathAiService.name);
+
   constructor(private readonly aiService: AiService) {}
+
+  isNonRetryableAiError(error: unknown): boolean {
+    if (
+      error instanceof ServiceUnavailableException ||
+      error instanceof BadRequestException
+    ) {
+      return true;
+    }
+    if (error instanceof HttpException) {
+      const status = error.getStatus();
+      if (
+        status === HttpStatus.TOO_MANY_REQUESTS ||
+        status === HttpStatus.UNAUTHORIZED ||
+        status === HttpStatus.FORBIDDEN ||
+        status === HttpStatus.SERVICE_UNAVAILABLE
+      ) {
+        return true;
+      }
+      if (
+        status === HttpStatus.BAD_GATEWAY &&
+        /\((401|403)\)/.test(error.message)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  buildFallbackUnitStudyPack(params: {
+    unit: AiUnitOutlineItem;
+    targetBand: string;
+    explanationLang: 'vi' | 'en';
+    languageCode?: LearningLanguageCode;
+  }): AiUnitStudyPack {
+    const targetLang = normalizeLearningLanguage(params.languageCode);
+    const { bandLabel } = this.resolveBandMetadata(
+      params.targetBand,
+      targetLang,
+    );
+    return this.sanitizeUnitStudyPack(
+      {},
+      params.unit,
+      bandLabel,
+      params.explanationLang,
+      targetLang,
+    );
+  }
 
   resolveBandMetadata(
     bandCode: string,
@@ -129,18 +187,19 @@ export class LearningPathAiService {
             `      "grammarFocus": "key ${targetLangName} grammar or functional skill",\n` +
             `      "icon": "one of: home|clock|sparkles|globe|target|book-open|layers|folder|flame|bar-chart",\n` +
             `      "themeColor": "one of: green|pink|lavender|cream",\n` +
-            `      "speakingTopicPrompt": "clear 1-sentence speaking roleplay/discussion prompt in ${explainLangName} or ${targetLangName}"\n` +
+            `      "speakingTopicPrompt": "clear 1-sentence speaking roleplay/discussion prompt in ${explainLangName} or ${targetLangName}",\n` +
+            `      "targetKeywords": ["3 distinct target ${targetLangName} words or phrases for this unit"]\n` +
             `    }\n` +
             `  ]\n` +
             `}\n` +
-            `Rules: Produce exactly ${params.unitCount} progressively ordered units for a learner moving from CEFR ${params.currentLevel} toward ${bandLabel} (CEFR ${targetCefr}).${koreanNote}`,
+            `Rules: Produce exactly ${params.unitCount} progressively ordered units for a learner moving from CEFR ${params.currentLevel} toward ${bandLabel} (CEFR ${targetCefr}), keeping targetKeywords distinct across units.${koreanNote}`,
         },
         {
           role: 'user',
           content: `Learner goal / topic: ${params.goalTopic}${focusBlock}`,
         },
       ],
-      { temperature: 0.45, maxTokens: 700 },
+      { temperature: 0.45, maxTokens: 1500, timeoutMs: 25_000 },
     );
 
     const unitsRaw = Array.isArray(data.units) ? data.units : [];
@@ -157,6 +216,13 @@ export class LearningPathAiService {
         240,
       );
       if (!title || !grammarFocus) continue;
+
+      const targetKeywords = Array.isArray(obj.targetKeywords)
+        ? obj.targetKeywords
+            .map((kw) => this.cleanString(kw, 60))
+            .filter((kw): kw is string => Boolean(kw))
+            .slice(0, 5)
+        : undefined;
 
       const rawIcon = this.cleanString(obj.icon, 32) ?? 'sparkles';
       const rawTone = this.cleanString(obj.themeColor, 24) ?? '';
@@ -176,6 +242,9 @@ export class LearningPathAiService {
         themeColor,
         speakingTopicPrompt:
           speakingTopicPrompt ?? `Discuss ideas related to ${title}.`,
+        ...(targetKeywords && targetKeywords.length > 0
+          ? { targetKeywords }
+          : {}),
       });
     }
 
@@ -234,29 +303,33 @@ export class LearningPathAiService {
     const focusBlock = params.learningFocus?.trim()
       ? `\nEmphasis / preference: ${params.learningFocus.trim()}`
       : '';
+    const seedKeywordsBlock =
+      params.unit.targetKeywords && params.unit.targetKeywords.length > 0
+        ? `\nPrioritize these unit keywords where helpful: ${params.unit.targetKeywords.join(', ')}`
+        : '';
     const avoidBlock =
       params.avoidTerms && params.avoidTerms.length > 0
-        ? `\nAvoid repeating these words already covered in earlier units: ${params.avoidTerms.slice(0, 20).join(', ')}`
+        ? `\nAvoid repeating these words used in other units: ${params.avoidTerms.slice(0, 20).join(', ')}`
         : '';
 
     const messages = [
       {
         role: 'system' as const,
         content:
-          `Create complete ${targetLangName} study materials + 4-skill exercises for ONE unit calibrated to ${bandLabel} (CEFR ${targetCefr}). Explanation language: ${explainLangName}.\n` +
+          `Create concise, high-impact ${targetLangName} study materials + 4-skill exercises for ONE unit calibrated to ${bandLabel} (CEFR ${targetCefr}). Explanation language: ${explainLangName}.\n` +
           `Return ONLY valid JSON with exact shape:\n` +
           `{\n` +
           `  "studyGuide": {\n` +
-          `    "overview": "concise Markdown/plain overview in ${explainLangName} (2-3 sentences)",\n` +
-          `    "grammarPoints": [{"title":"rule title in ${explainLangName}","explanation":"clear explanation in ${explainLangName}","example":"natural ${targetLangName} sentence"}],\n` +
+          `    "overview": "concise plain overview in ${explainLangName} (2 sentences)",\n` +
+          `    "grammarPoints": [{"title":"rule title in ${explainLangName}","explanation":"clear 1-2 sentence explanation in ${explainLangName}","example":"natural ${targetLangName} sentence"}],\n` +
           `    "keyPatterns": [{"pattern":"${targetLangName} sentence template","meaning":"meaning in ${explainLangName}","example":"${targetLangName} example"}],\n` +
           `    "commonMistakes": [{"mistake":"common wrong ${targetLangName} sentence","correction":"natural corrected version","tip":"why in ${explainLangName}"}],\n` +
           `    "studyTips": ["short practical tip in ${explainLangName}"]\n` +
           `  },\n` +
-          `  "vocabulary": [{"term":"word/phrase in ${targetLangName}","pronunciation":"${pronRule}","partOfSpeech":"${posRule}","definition":"${defLanguageRule}","example":"natural ${targetLangName} sentence","notes":"usage note in ${explainLangName}"}],\n` +
+          `  "vocabulary": [{"term":"word/phrase in ${targetLangName}","pronunciation":"${pronRule}","partOfSpeech":"${posRule}","definition":"${defLanguageRule}","example":"natural ${targetLangName} sentence","notes":"concise usage note in ${explainLangName}"}],\n` +
           `  "readingListening": {\n` +
           `    "title": "short ${targetLangName} passage title",\n` +
-          `    "audioScript": "natural 80-110 ${targetLang === 'ko' ? 'syllable/word Korean Hangul' : 'word English'} passage/dialogue using the unit vocabulary words",\n` +
+          `    "audioScript": "natural 65-95 ${targetLang === 'ko' ? 'syllable/word Korean Hangul' : 'word English'} passage/dialogue using the unit vocabulary words",\n` +
           `    "translation": "${explainLangName === 'Vietnamese' ? 'natural Vietnamese translation of audioScript' : 'concise English translation/summary'}",\n` +
           `    "questions": [{"prompt":"comprehension question in ${explainLangName}","options":["A","B","C","D"],"correctIndex":0,"explanation":"short explanation in ${explainLangName}"}]\n` +
           `  },\n` +
@@ -264,10 +337,10 @@ export class LearningPathAiService {
           `    "prompt": "clear writing task in ${explainLangName} telling learner what to write in ${targetLangName}",\n` +
           `    "minSentences": 4,\n` +
           `    "targetTerms": ["term1","term2","term3"],\n` +
-          `    "sampleAnswer": "well-written 4-5 sentence ${targetLangName} model paragraph at ${bandLabel}"\n` +
+          `    "sampleAnswer": "well-written 4 sentence ${targetLangName} model paragraph at ${bandLabel}"\n` +
           `  }\n` +
           `}\n` +
-          `Rules: Provide 2 grammarPoints, 3 keyPatterns, 2 commonMistakes, 2 studyTips, 5 vocabulary items, and 3 MCQs each with 4 concise options.${targetLang === 'ko' ? ' All Korean terms, examples, audioScript, and sampleAnswer MUST be written in Korean Hangul.' : ''}`,
+          `Rules: Provide 2 grammarPoints, 2 keyPatterns, 2 commonMistakes, 2 studyTips, 5 vocabulary items, and 3 MCQs each with 4 concise options.${targetLang === 'ko' ? ' All Korean terms, examples, audioScript, and sampleAnswer MUST be written in Korean Hangul.' : ''}`,
       },
       {
         role: 'user' as const,
@@ -276,7 +349,7 @@ export class LearningPathAiService {
           `Unit ${params.unit.unitNumber}: ${params.unit.title}\n` +
           `Topic: ${params.unit.topicName}\n` +
           `Grammar focus: ${params.unit.grammarFocus}` +
-          `${avoidBlock}${focusBlock}`,
+          `${seedKeywordsBlock}${avoidBlock}${focusBlock}`,
       },
     ];
 
@@ -284,13 +357,19 @@ export class LearningPathAiService {
     try {
       const response = await this.aiService.chatJson<Record<string, unknown>>(
         messages,
-        { temperature: 0.4, maxTokens: 2600 },
+        { temperature: 0.4, maxTokens: 3600, timeoutMs: 25_000 },
       );
       data = response.data;
-    } catch {
+    } catch (error) {
+      if (this.isNonRetryableAiError(error)) {
+        throw error;
+      }
+      this.logger.warn(
+        `Retrying unit ${params.unit.unitNumber} study pack after transient failure: ${(error as Error).message}`,
+      );
       const retryResponse = await this.aiService.chatJson<
         Record<string, unknown>
-      >(messages, { temperature: 0.35, maxTokens: 2800 });
+      >(messages, { temperature: 0.3, maxTokens: 3600, timeoutMs: 25_000 });
       data = retryResponse.data;
     }
 
@@ -344,7 +423,7 @@ export class LearningPathAiService {
             `Core unit vocabulary: ${params.targetTerms.join(', ')}${focusBlock}`,
         },
       ],
-      { temperature: 0.45, maxTokens: 900 },
+      { temperature: 0.45, maxTokens: 1800, timeoutMs: 25_000 },
     );
 
     const sanitized = this.sanitizeStudyGuide(
