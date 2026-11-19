@@ -131,6 +131,10 @@ export class AuthService {
           displayName: profile.displayName,
           avatarUrl: profile.avatarUrl,
           timezone: dto.timezone ?? 'UTC',
+          learningGoalBand: 'starter_a0',
+          currentLevel: 'A0',
+          koreanGoalBand: 'ko_starter_a0',
+          koreanCurrentLevel: 'A0',
         }),
       );
 
