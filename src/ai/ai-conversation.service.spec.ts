@@ -311,4 +311,25 @@ describe('AiConversationService', () => {
       take: 20,
     });
   });
+
+  it('adds bilingual A0 beginner scaffolding when starting an absolute beginner conversation', async () => {
+    aiService.chatJson.mockResolvedValue({
+      model: 'openai/gpt-oss-120b',
+      data: {
+        greeting: 'Hello! (Xin chào!)',
+        openingQuestion: 'What is your name? (Tên bạn là gì?)',
+      },
+    });
+
+    const detail = await service.startSession(5, {
+      languageCode: 'en',
+      topic: 'Say Hello',
+      level: 'A0',
+      explanationLang: 'vi',
+    });
+
+    expect(detail.level).toBe('A0');
+    const [promptMessages] = aiService.chatJson.mock.calls[0];
+    expect(promptMessages[0].content).toContain('absolute beginner');
+  });
 });

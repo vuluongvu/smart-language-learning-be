@@ -1,5 +1,6 @@
 import type { SeedTrackSpec } from './learning-path.catalog.js';
 import type { UnitVocabWord } from '../entities/learning-path-unit.entity.js';
+import { KOREAN_STARTER_A0_TRACK } from './starter-korean.catalog.js';
 
 function kw(
   term: string,
@@ -13,6 +14,7 @@ function kw(
 }
 
 export const KOREAN_LEARNING_PATH_CATALOG: SeedTrackSpec[] = [
+  KOREAN_STARTER_A0_TRACK,
   {
     code: 'topik_1_2',
     title: 'TOPIK I · 1~2급',

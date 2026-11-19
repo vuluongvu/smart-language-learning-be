@@ -35,11 +35,11 @@ export class StartConversationDto {
   languageCode?: LearningLanguageCode;
 
   @ApiPropertyOptional({
-    enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'],
+    enum: ['A0', 'A1', 'A2', 'B1', 'B2', 'C1', 'C2'],
     default: 'B1',
   })
   @IsOptional()
-  @IsIn(['A1', 'A2', 'B1', 'B2', 'C1', 'C2'])
+  @IsIn(['A0', 'A1', 'A2', 'B1', 'B2', 'C1', 'C2'])
   level?: ConversationLevel;
 
   @ApiPropertyOptional({ enum: ['vi', 'en'], default: 'vi' })

@@ -600,12 +600,23 @@ export class LearningPathService {
     const trackLang = normalizeLearningLanguage(track.languageCode);
     const targetLangName = getLearningLanguageDisplayName(trackLang);
     const cleanText = dto.text.trim();
-    const minChars = trackLang === 'ko' ? 5 : 10;
+    const isBeginnerZero = track.cefrLevel === 'A0';
+    const minChars = isBeginnerZero
+      ? trackLang === 'ko'
+        ? 2
+        : 4
+      : trackLang === 'ko'
+        ? 5
+        : 10;
     if (cleanText.length < minChars) {
       throw new BadRequestException(
-        trackLang === 'ko'
-          ? 'Please write at least a full Korean sentence before submitting.'
-          : 'Please write at least a full English sentence before submitting.',
+        isBeginnerZero
+          ? trackLang === 'ko'
+            ? 'Please write at least a short Korean word or greeting before submitting.'
+            : 'Please write at least a short English phrase or 1 simple sentence before submitting.'
+          : trackLang === 'ko'
+            ? 'Please write at least a full Korean sentence before submitting.'
+            : 'Please write at least a full English sentence before submitting.',
       );
     }
 
@@ -621,27 +632,35 @@ export class LearningPathService {
       (term) => !normalizedLower.includes(term.toLowerCase()),
     );
 
-    const estimatedHint =
-      trackLang === 'ko'
+    const estimatedHint = isBeginnerZero
+      ? trackLang === 'ko'
+        ? 'encouraging beginner estimate like "Nhập môn A0 (Hangul)"'
+        : 'encouraging beginner estimate like "Nhập môn A0"'
+      : trackLang === 'ko'
         ? 'short TOPIK estimate string like TOPIK 2급 or TOPIK 3급'
         : 'short Band estimate string like Band 5.0';
     const koreanCheckRule =
       trackLang === 'ko'
-        ? ' Evaluate Korean Hangul spelling, word spacing (띄어쓰기), particle accuracy (은/는, 이/가, 을/를), verb endings, and honorific consistency.'
+        ? isBeginnerZero
+          ? ' For absolute beginner (A0), gently check Hangul spelling, basic syllable blocks, and Romanization/pronunciation hints without harsh grading.'
+          : ' Evaluate Korean Hangul spelling, word spacing (띄어쓰기), particle accuracy (은/는, 이/가, 을/를), verb endings, and honorific consistency.'
         : '';
+    const zeroBeginnerRule = isBeginnerZero
+      ? ` This learner is an ABSOLUTE BEGINNER (CEFR A0). Praise every correct word or short sentence warmly, explain errors in ultra-simple ${explainLangName} with no jargon, and keep upgradedVersion to 1–2 short, super simple ${targetLangName} sentences.`
+      : '';
 
     const { data } = await this.aiService.chatJson<RawWritingEvalResponse>(
       [
         {
           role: 'system',
           content:
-            `You evaluate a learner's short ${targetLangName} paragraph for Unit "${unit.title}". Target level: ${unit.writingPromptJson.targetBand} (CEFR ${track.cefrLevel}). Grammar focus: ${unit.grammarFocus}. Explanation language: ${explainLangName}.${koreanCheckRule}\n` +
+            `You evaluate a learner's short ${targetLangName} ${isBeginnerZero ? 'sentence/phrase' : 'paragraph'} for Unit "${unit.title}". Target level: ${unit.writingPromptJson.targetBand} (CEFR ${track.cefrLevel}). Grammar focus: ${unit.grammarFocus}. Explanation language: ${explainLangName}.${koreanCheckRule}${zeroBeginnerRule}\n` +
             `Return ONLY valid JSON:\n` +
             `{\n` +
             `  "estimatedBand": "${estimatedHint}",\n` +
-            `  "summary": "clear evaluation whether the paragraph is accurate, natural, and fits the prompt (in ${explainLangName})",\n` +
-            `  "notableErrors": [{"original":"wrong phrase","correction":"better phrase","reason":"concise reason in ${explainLangName}"}],\n` +
-            `  "upgradedVersion": "natural rewritten ${targetLangName} paragraph calibrated to ${unit.writingPromptJson.targetBand}",\n` +
+            `  "summary": "clear encouraging evaluation in ${explainLangName}",\n` +
+            `  "notableErrors": [{"original":"wrong phrase","correction":"better phrase","reason":"concise simple reason in ${explainLangName}"}],\n` +
+            `  "upgradedVersion": "natural rewritten ${targetLangName} ${isBeginnerZero ? 'short 1-2 sentences' : 'paragraph'} calibrated to ${unit.writingPromptJson.targetBand}",\n` +
             `  "explanation": "concise Markdown tips (**bold**, numbered points separated by newlines) in ${explainLangName}",\n` +
             `  "suggestedWords": [{"term":"word/phrase in ${targetLangName}","partOfSpeech":"noun|verb|adjective|adverb|phrase|null","definition":"meaning in ${explainLangName}","example":"short ${targetLangName} sentence"}]\n` +
             `}\n` +
@@ -1241,6 +1260,7 @@ export class LearningPathService {
 
   private mapCefrToConversationLevel(cefr: string): ConversationLevel {
     if (
+      cefr === 'A0' ||
       cefr === 'A1' ||
       cefr === 'A2' ||
       cefr === 'B1' ||

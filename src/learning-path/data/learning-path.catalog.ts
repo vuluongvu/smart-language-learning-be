@@ -1,9 +1,11 @@
 import {
   UnitReadingListening,
+  UnitStudyGuide,
   UnitVocabWord,
   UnitWritingPrompt,
 } from '../entities/learning-path-unit.entity.js';
 import { LearningGoalBand } from '../dto/learning-path.dto.js';
+import { ENGLISH_STARTER_A0_TRACK } from './starter-english.catalog.js';
 
 export interface SeedUnitSpec {
   unitNumber: number;
@@ -13,6 +15,7 @@ export interface SeedUnitSpec {
   icon: string;
   themeColor: string;
   grammarFocus: string;
+  studyGuide?: UnitStudyGuide;
   vocabulary: UnitVocabWord[];
   readingListening: UnitReadingListening;
   writing: UnitWritingPrompt;
@@ -47,6 +50,7 @@ function w(
 }
 
 export const LEARNING_PATH_CATALOG: SeedTrackSpec[] = [
+  ENGLISH_STARTER_A0_TRACK,
   {
     code: 'band_45_55',
     title: 'Band 4.5–5.5',

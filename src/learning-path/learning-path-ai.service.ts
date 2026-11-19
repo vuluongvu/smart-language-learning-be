@@ -68,9 +68,11 @@ const ALLOWED_TONES = ['green', 'pink', 'lavender', 'cream'] as const;
 
 const BAND_METADATA: Record<string, { bandLabel: string; targetCefr: string }> =
   {
+    starter_a0: { bandLabel: 'Zero Foundation (A0→A1)', targetCefr: 'A0' },
     band_45_55: { bandLabel: 'Band 4.5–5.5', targetCefr: 'B1' },
     band_55_65: { bandLabel: 'Band 5.5–6.5', targetCefr: 'B2' },
     band_65_75: { bandLabel: 'Band 6.5–7.5+', targetCefr: 'C1' },
+    ko_starter_a0: { bandLabel: 'Hangul Zero (A0→A1)', targetCefr: 'A0' },
     topik_1_2: { bandLabel: 'TOPIK I (1–2급)', targetCefr: 'A2' },
     topik_3_4: { bandLabel: 'TOPIK II (3–4급)', targetCefr: 'B1' },
     topik_5_6: { bandLabel: 'TOPIK II (5–6급)', targetCefr: 'C1' },
@@ -164,9 +166,14 @@ export class LearningPathAiService {
     const focusBlock = params.learningFocus?.trim()
       ? `\nLearning emphasis requested by learner: ${params.learningFocus.trim()}`
       : '';
+    const isBeginnerZero =
+      targetCefr === 'A0' || params.currentLevel.trim().toUpperCase() === 'A0';
+    const beginnerRule = isBeginnerZero
+      ? ' The learner is starting from ABSOLUTE ZERO (knows almost nothing): design ultra-gentle first-step units starting with sounds, basic survival words, and 3-4 word greetings/sentences with zero advanced grammar.'
+      : '';
     const koreanNote =
       targetLang === 'ko'
-        ? ` Write unit/track titles naturally for Korean learners (can pair Korean Hangul with short ${explainLangName} subtitle) and include Korean grammar points like particles or verb endings.`
+        ? ` Write unit/track titles naturally for Korean learners (can pair Korean Hangul with short ${explainLangName} subtitle) and include Korean ${isBeginnerZero ? 'Hangul reading/basic greetings' : 'grammar points like particles or verb endings'}.`
         : '';
 
     const { data } = await this.aiService.chatJson<Record<string, unknown>>(
@@ -192,7 +199,7 @@ export class LearningPathAiService {
             `    }\n` +
             `  ]\n` +
             `}\n` +
-            `Rules: Produce exactly ${params.unitCount} progressively ordered units for a learner moving from CEFR ${params.currentLevel} toward ${bandLabel} (CEFR ${targetCefr}), keeping targetKeywords distinct across units.${koreanNote}`,
+            `Rules: Produce exactly ${params.unitCount} progressively ordered units for a learner moving from CEFR ${params.currentLevel} toward ${bandLabel} (CEFR ${targetCefr}), keeping targetKeywords distinct across units.${beginnerRule}${koreanNote}`,
         },
         {
           role: 'user',
@@ -312,6 +319,18 @@ export class LearningPathAiService {
         ? `\nAvoid repeating these words used in other units: ${params.avoidTerms.slice(0, 20).join(', ')}`
         : '';
 
+    const isBeginnerZero = targetCefr === 'A0';
+    const minSentencesTarget = isBeginnerZero ? 1 : 4;
+    const passageLengthRule = isBeginnerZero
+      ? `short, ultra-simple 35-55 ${targetLang === 'ko' ? 'syllable Korean Hangul' : 'word English'} beginner dialogue using easy 3-6 word sentences`
+      : `natural 65-95 ${targetLang === 'ko' ? 'syllable/word Korean Hangul' : 'word English'} passage/dialogue using the unit vocabulary words`;
+    const writingSampleRule = isBeginnerZero
+      ? `2 short, super simple ${targetLangName} starter sentences (1 line each)`
+      : `well-written 4 sentence ${targetLangName} model paragraph at ${bandLabel}`;
+    const beginnerUnitRule = isBeginnerZero
+      ? ` This unit is for an ABSOLUTE BEGINNER (A0) knowing almost nothing: keep all vocabulary everyday basics with beginner-friendly pronunciation tips in ${explainLangName}, simple grammar explanations with zero linguistic jargon, and short MCQs.`
+      : '';
+
     const messages = [
       {
         role: 'system' as const,
@@ -329,18 +348,18 @@ export class LearningPathAiService {
           `  "vocabulary": [{"term":"word/phrase in ${targetLangName}","pronunciation":"${pronRule}","partOfSpeech":"${posRule}","definition":"${defLanguageRule}","example":"natural ${targetLangName} sentence","notes":"concise usage note in ${explainLangName}"}],\n` +
           `  "readingListening": {\n` +
           `    "title": "short ${targetLangName} passage title",\n` +
-          `    "audioScript": "natural 65-95 ${targetLang === 'ko' ? 'syllable/word Korean Hangul' : 'word English'} passage/dialogue using the unit vocabulary words",\n` +
+          `    "audioScript": "${passageLengthRule}",\n` +
           `    "translation": "${explainLangName === 'Vietnamese' ? 'natural Vietnamese translation of audioScript' : 'concise English translation/summary'}",\n` +
           `    "questions": [{"prompt":"comprehension question in ${explainLangName}","options":["A","B","C","D"],"correctIndex":0,"explanation":"short explanation in ${explainLangName}"}]\n` +
           `  },\n` +
           `  "writing": {\n` +
           `    "prompt": "clear writing task in ${explainLangName} telling learner what to write in ${targetLangName}",\n` +
-          `    "minSentences": 4,\n` +
+          `    "minSentences": ${minSentencesTarget},\n` +
           `    "targetTerms": ["term1","term2","term3"],\n` +
-          `    "sampleAnswer": "well-written 4 sentence ${targetLangName} model paragraph at ${bandLabel}"\n` +
+          `    "sampleAnswer": "${writingSampleRule}"\n` +
           `  }\n` +
           `}\n` +
-          `Rules: Provide 2 grammarPoints, 2 keyPatterns, 2 commonMistakes, 2 studyTips, 5 vocabulary items, and 3 MCQs each with 4 concise options.${targetLang === 'ko' ? ' All Korean terms, examples, audioScript, and sampleAnswer MUST be written in Korean Hangul.' : ''}`,
+          `Rules: Provide 2 grammarPoints, 2 keyPatterns, 2 commonMistakes, 2 studyTips, 5 vocabulary items, and 3 MCQs each with 4 concise options.${beginnerUnitRule}${targetLang === 'ko' ? ' All Korean terms, examples, audioScript, and sampleAnswer MUST be written in Korean Hangul.' : ''}`,
       },
       {
         role: 'user' as const,
