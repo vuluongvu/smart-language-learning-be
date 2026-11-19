@@ -181,4 +181,19 @@ describe('UsersService', () => {
     expect(res.message).toBe('Account deleted successfully');
     expect(userRepo.delete).toHaveBeenCalledWith({ id: 3 });
   });
+
+  it('defaults newly registered accounts to A0 starter tracks for English and Korean', async () => {
+    userRepo.findOneBy.mockResolvedValue(null);
+
+    const created = await service.createWithPassword({
+      email: 'NewBeginner@Example.com',
+      displayName: 'New Beginner',
+      password: 'Password123!',
+    });
+
+    expect(created.learningGoalBand).toBe('starter_a0');
+    expect(created.currentLevel).toBe('A0');
+    expect(created.koreanGoalBand).toBe('ko_starter_a0');
+    expect(created.koreanCurrentLevel).toBe('A0');
+  });
 });
