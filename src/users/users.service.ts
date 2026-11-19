@@ -234,6 +234,16 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
+    const normalizedConfirmEmail = this.normalizeEmail(dto.confirmEmail ?? '');
+    if (
+      !normalizedConfirmEmail ||
+      normalizedConfirmEmail !== this.normalizeEmail(user.email)
+    ) {
+      throw new BadRequestException(
+        'Confirmation email does not match your account email',
+      );
+    }
+
     if (user.passwordHash) {
       if (!dto.currentPassword) {
         throw new BadRequestException(

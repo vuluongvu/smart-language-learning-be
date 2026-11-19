@@ -64,12 +64,19 @@ describe('Phase 6 MVP Smoke & Security Boundaries (e2e)', () => {
   });
 
   afterAll(async () => {
-    for (const token of [ownerToken, intruderToken]) {
+    for (const [token, email] of [
+      [ownerToken, `p6.owner.${ts}@example.com`],
+      [intruderToken, `p6.intruder.${ts}@example.com`],
+    ] as const) {
       if (token) {
         await request(app.getHttpServer())
           .delete('/api/v1/users/me')
           .set('Authorization', `Bearer ${token}`)
-          .send({ confirm: true, currentPassword: password });
+          .send({
+            confirm: true,
+            confirmEmail: email,
+            currentPassword: password,
+          });
       }
     }
     await app.close();
