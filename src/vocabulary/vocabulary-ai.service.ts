@@ -5,6 +5,10 @@ import {
 } from '@nestjs/common';
 import { AiService, AiTokenUsage } from '../ai/ai.service.js';
 import {
+  type UploadedImageInput,
+  validateAndEncodeImageDataUrl,
+} from '../common/utils/image-upload.util.js';
+import {
   type LearningLanguageCode,
   normalizeLearningLanguage,
 } from '../common/constants/learning-languages.js';
@@ -18,13 +22,7 @@ import { VocabularyService } from './vocabulary.service.js';
 
 export const MAX_VOCAB_IMAGE_BYTES = 5 * 1024 * 1024;
 export const DEFAULT_IMAGE_EXTRACT_COUNT = 8;
-
-export interface UploadedImageInput {
-  buffer: Buffer;
-  mimetype: string;
-  originalname: string;
-  size: number;
-}
+export type { UploadedImageInput };
 
 export interface AiVocabularyDraft {
   term: string;
@@ -114,46 +112,6 @@ function getImageExtractSystemPrompt(lang: LearningLanguageCode): string {
     '{"term":"English word or phrase","pronunciation":"/IPA/","partOfSpeech":"noun|verb|adjective|adverb|phrase|idiom|preposition","definition":"concise Vietnamese meaning","example":"natural English sentence (prefer context from the image if applicable)","notes":"short Vietnamese usage tip or null"}. ' +
     'Rules: prioritize actual English terms visible in the image when text is present; definition and notes MUST be in Vietnamese; example MUST be in English; avoid duplicate terms; if no usable English vocabulary can be found, return {"suggestedTopic":null,"items":[]}.'
   );
-}
-
-function detectImageMimeType(
-  buffer: Buffer,
-): 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | null {
-  if (
-    buffer.length >= 8 &&
-    buffer[0] === 0x89 &&
-    buffer[1] === 0x50 &&
-    buffer[2] === 0x4e &&
-    buffer[3] === 0x47 &&
-    buffer[4] === 0x0d &&
-    buffer[5] === 0x0a &&
-    buffer[6] === 0x1a &&
-    buffer[7] === 0x0a
-  ) {
-    return 'image/png';
-  }
-  if (
-    buffer.length >= 3 &&
-    buffer[0] === 0xff &&
-    buffer[1] === 0xd8 &&
-    buffer[2] === 0xff
-  ) {
-    return 'image/jpeg';
-  }
-  if (
-    buffer.length >= 12 &&
-    buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
-    buffer.subarray(8, 12).toString('ascii') === 'WEBP'
-  ) {
-    return 'image/webp';
-  }
-  if (buffer.length >= 6) {
-    const header = buffer.subarray(0, 6).toString('ascii');
-    if (header === 'GIF87a' || header === 'GIF89a') {
-      return 'image/gif';
-    }
-  }
-  return null;
 }
 
 @Injectable()
@@ -328,21 +286,7 @@ export class VocabularyAiService {
   }
 
   private validateAndEncodeImage(file?: UploadedImageInput): string {
-    if (!file || !file.buffer || file.buffer.length === 0) {
-      throw new BadRequestException('Image file is required');
-    }
-    if (file.buffer.length > MAX_VOCAB_IMAGE_BYTES) {
-      throw new BadRequestException('Image file size must not exceed 5 MB');
-    }
-
-    const detectedMime = detectImageMimeType(file.buffer);
-    if (!detectedMime) {
-      throw new BadRequestException(
-        'Unsupported image format. Please upload a PNG, JPEG, WebP, or GIF file.',
-      );
-    }
-
-    return `data:${detectedMime};base64,${file.buffer.toString('base64')}`;
+    return validateAndEncodeImageDataUrl(file, MAX_VOCAB_IMAGE_BYTES, '5 MB');
   }
 
   private async resolveTopicContext(
