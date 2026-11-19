@@ -67,13 +67,21 @@ describe('Phase 2 Topics & Vocabulary (e2e)', () => {
       await request(app.getHttpServer())
         .delete('/api/v1/users/me')
         .set('Authorization', `Bearer ${user1Token}`)
-        .send({ confirm: true, currentPassword: password });
+        .send({
+          confirm: true,
+          confirmEmail: `p2.u1.${ts}@example.com`,
+          currentPassword: password,
+        });
     }
     if (user2Token) {
       await request(app.getHttpServer())
         .delete('/api/v1/users/me')
         .set('Authorization', `Bearer ${user2Token}`)
-        .send({ confirm: true, currentPassword: password });
+        .send({
+          confirm: true,
+          confirmEmail: `p2.u2.${ts}@example.com`,
+          currentPassword: password,
+        });
     }
     await app.close();
   });

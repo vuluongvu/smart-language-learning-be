@@ -77,12 +77,20 @@ describe('Phase 5 Progress, Streaks & Leaderboard (e2e)', () => {
   });
 
   afterAll(async () => {
-    for (const token of [user1Token, user2Token, user3Token]) {
+    for (const [token, email] of [
+      [user1Token, `p5.u1.${ts}@example.com`],
+      [user2Token, `p5.u2.${ts}@example.com`],
+      [user3Token, `p5.u3.${ts}@example.com`],
+    ] as const) {
       if (token) {
         await request(app.getHttpServer())
           .delete('/api/v1/users/me')
           .set('Authorization', `Bearer ${token}`)
-          .send({ confirm: true, currentPassword: password });
+          .send({
+            confirm: true,
+            confirmEmail: email,
+            currentPassword: password,
+          });
       }
     }
     await app.close();
