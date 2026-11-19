@@ -29,6 +29,7 @@ import {
   AiHandwritingService,
   MAX_HANDWRITING_IMAGE_BYTES,
 } from './ai-handwriting.service.js';
+import { AiStarterGrammarService } from './ai-starter-grammar.service.js';
 import { AiMessage, AiService, type UploadedAudioInput } from './ai.service.js';
 import { ChatDto } from './dto/chat.dto.js';
 import {
@@ -37,6 +38,7 @@ import {
   StartConversationDto,
 } from './dto/conversation.dto.js';
 import { RecognizeHandwritingDto } from './dto/handwriting.dto.js';
+import { GenerateStarterGrammarDto } from './dto/starter-grammar.dto.js';
 
 const ENGLISH_TUTOR_SYSTEM_PROMPT =
   'You are a friendly English tutor in a language-learning app. ' +
@@ -65,6 +67,7 @@ export class AiController {
     private readonly aiService: AiService,
     private readonly conversationService: AiConversationService,
     private readonly handwritingService: AiHandwritingService,
+    private readonly starterGrammarService: AiStarterGrammarService,
   ) {}
 
   @Get('status')
@@ -201,5 +204,15 @@ export class AiController {
     @Body() dto: RecognizeHandwritingDto,
   ) {
     return this.handwritingService.recognizeHandwriting(image, dto);
+  }
+
+  @Post('starter-grammar')
+  @Throttle({ default: { limit: 12, ttl: 60_000 } })
+  @ApiOperation({
+    summary:
+      'Generate a structured starter grammar lesson and interactive exercises (en/ko) for any topic',
+  })
+  generateStarterGrammar(@Body() dto: GenerateStarterGrammarDto) {
+    return this.starterGrammarService.generate(dto);
   }
 }
