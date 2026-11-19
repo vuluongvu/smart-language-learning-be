@@ -9,6 +9,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity.js';
+import type { LearningLanguageCode } from '../../common/constants/learning-languages.js';
 
 export type ConversationLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
 export type ExplanationLanguage = 'vi' | 'en';
@@ -36,6 +37,7 @@ export interface ConversationSummary {
 
 @Entity({ name: 'ai_conversation_sessions' })
 @Index('IDX_ai_conv_sessions_user_status', ['userId', 'status', 'createdAt'])
+@Index('IDX_ai_conv_sessions_user_language', ['userId', 'languageCode'])
 export class AiConversationSession {
   @PrimaryGeneratedColumn()
   id: number;
@@ -46,6 +48,9 @@ export class AiConversationSession {
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user: User;
+
+  @Column({ name: 'language_code', type: 'varchar', length: 16, default: 'en' })
+  languageCode: LearningLanguageCode;
 
   @Column({ type: 'varchar', length: 160 })
   topic: string;

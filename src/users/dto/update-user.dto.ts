@@ -1,11 +1,16 @@
 import {
   IsBoolean,
+  IsIn,
   IsOptional,
   IsString,
   IsUrl,
   MaxLength,
   MinLength,
 } from 'class-validator';
+import {
+  type LearningLanguageCode,
+  SUPPORTED_LEARNING_LANGUAGES,
+} from '../../common/constants/learning-languages.js';
 import { IsIanaTimezone } from '../../common/validators/is-iana-timezone.validator.js';
 
 export class UpdateProfileDto {
@@ -30,4 +35,8 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsBoolean()
   isLeaderboardVisible?: boolean;
+
+  @IsOptional()
+  @IsIn(SUPPORTED_LEARNING_LANGUAGES)
+  learningLanguage?: LearningLanguageCode;
 }

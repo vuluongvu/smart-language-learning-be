@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { LEARNING_PATH_CATALOG } from './data/learning-path.catalog.js';
+import { KOREAN_LEARNING_PATH_CATALOG } from './data/learning-path-korean.catalog.js';
 import { LearningPathPart } from './entities/learning-path-part.entity.js';
 import { LearningPathTrack } from './entities/learning-path-track.entity.js';
 import { LearningPathUnit } from './entities/learning-path-unit.entity.js';
@@ -37,9 +38,13 @@ export class LearningPathCatalogService implements OnModuleInit {
       const tRepo = manager.getRepository(LearningPathTrack);
       const pRepo = manager.getRepository(LearningPathPart);
       const uRepo = manager.getRepository(LearningPathUnit);
+      const allCatalogTracks = [
+        ...LEARNING_PATH_CATALOG,
+        ...KOREAN_LEARNING_PATH_CATALOG,
+      ];
 
-      for (let tIdx = 0; tIdx < LEARNING_PATH_CATALOG.length; tIdx += 1) {
-        const trackSpec = LEARNING_PATH_CATALOG[tIdx];
+      for (let tIdx = 0; tIdx < allCatalogTracks.length; tIdx += 1) {
+        const trackSpec = allCatalogTracks[tIdx];
         let track = await tRepo.findOneBy({ code: trackSpec.code });
         if (!track) {
           track = tRepo.create({
@@ -55,6 +60,7 @@ export class LearningPathCatalogService implements OnModuleInit {
         } else {
           track.title = trackSpec.title;
           track.cefrLevel = trackSpec.cefrLevel;
+          track.languageCode = trackSpec.languageCode;
           track.summary = trackSpec.summary;
           track.ownerUserId = null;
           track.isAiGenerated = false;

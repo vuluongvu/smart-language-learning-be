@@ -6,6 +6,7 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  Query,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -18,18 +19,40 @@ import {
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
+import {
+  type LearningLanguageCode,
+  normalizeLearningLanguage,
+} from '../common/constants/learning-languages.js';
+import { type UploadedImageInput } from '../common/utils/image-upload.util.js';
 import { AiConversationService } from './ai-conversation.service.js';
+import {
+  AiHandwritingService,
+  MAX_HANDWRITING_IMAGE_BYTES,
+} from './ai-handwriting.service.js';
 import { AiMessage, AiService, type UploadedAudioInput } from './ai.service.js';
 import { ChatDto } from './dto/chat.dto.js';
 import {
+  ListConversationsQueryDto,
   ReplyConversationDto,
   StartConversationDto,
 } from './dto/conversation.dto.js';
+import { RecognizeHandwritingDto } from './dto/handwriting.dto.js';
 
-const TUTOR_SYSTEM_PROMPT =
+const ENGLISH_TUTOR_SYSTEM_PROMPT =
   'You are a friendly English tutor in a language-learning app. ' +
   'Explain vocabulary, grammar and usage clearly and concisely, ' +
   'give short examples, and correct mistakes politely.';
+
+const KOREAN_TUTOR_SYSTEM_PROMPT =
+  'You are a friendly Korean language tutor in a language-learning app. ' +
+  'Explain Hangul vocabulary, Korean grammar (particles, verb conjugations, honorifics), and natural usage clearly and concisely. ' +
+  'Include Hangul examples with pronunciation/Romanization hints when helpful, and correct learner mistakes politely.';
+
+function getTutorPrompt(lang: LearningLanguageCode): string {
+  return lang === 'ko'
+    ? KOREAN_TUTOR_SYSTEM_PROMPT
+    : ENGLISH_TUTOR_SYSTEM_PROMPT;
+}
 
 const MAX_CHAT_HISTORY_MESSAGES = 10;
 const MAX_CHAT_HISTORY_CHARS = 800;
@@ -41,6 +64,7 @@ export class AiController {
   constructor(
     private readonly aiService: AiService,
     private readonly conversationService: AiConversationService,
+    private readonly handwritingService: AiHandwritingService,
   ) {}
 
   @Get('status')
@@ -51,7 +75,7 @@ export class AiController {
 
   @Post('chat')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  @ApiOperation({ summary: 'Chat with the AI English tutor' })
+  @ApiOperation({ summary: 'Chat with the AI language tutor (en or ko)' })
   chat(@Body() dto: ChatDto) {
     const compactHistory: AiMessage[] = (dto.history ?? [])
       .slice(-MAX_CHAT_HISTORY_MESSAGES)
@@ -60,8 +84,9 @@ export class AiController {
         content: item.content.slice(0, MAX_CHAT_HISTORY_CHARS),
       }));
 
+    const lang = normalizeLearningLanguage(dto.languageCode);
     const messages: AiMessage[] = [
-      { role: 'system', content: TUTOR_SYSTEM_PROMPT },
+      { role: 'system', content: getTutorPrompt(lang) },
       ...compactHistory,
       { role: 'user', content: dto.message },
     ];
@@ -76,7 +101,7 @@ export class AiController {
     }),
   )
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({ summary: 'Transcribe spoken English audio via Groq Whisper' })
+  @ApiOperation({ summary: 'Transcribe spoken audio (en/ko) via Groq Whisper' })
   transcribe(
     @UploadedFile() file?: UploadedAudioInput,
     @Body('language') language?: string,
@@ -94,13 +119,20 @@ export class AiController {
     ) {
       throw new BadRequestException('Unsupported audio format');
     }
-    return this.aiService.transcribeAudio(file, { language, prompt });
+    const normalizedLang = normalizeLearningLanguage(language);
+    return this.aiService.transcribeAudio(file, {
+      language: normalizedLang,
+      prompt,
+    });
   }
 
   @Get('conversations')
   @ApiOperation({ summary: 'List guided conversation practice sessions' })
-  listConversations(@CurrentUser('userId') userId: number) {
-    return this.conversationService.listSessions(userId);
+  listConversations(
+    @CurrentUser('userId') userId: number,
+    @Query() query: ListConversationsQueryDto,
+  ) {
+    return this.conversationService.listSessions(userId, query.languageCode);
   }
 
   @Post('conversations')
@@ -150,5 +182,24 @@ export class AiController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.conversationService.endSession(userId, id);
+  }
+
+  @Post('handwriting/recognize')
+  @Throttle({ default: { limit: 25, ttl: 60_000 } })
+  @UseInterceptors(
+    FileInterceptor('image', {
+      limits: { fileSize: MAX_HANDWRITING_IMAGE_BYTES },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary:
+      'Recognize or evaluate handwritten Korean Hangul from a canvas image via AI vision',
+  })
+  recognizeHandwriting(
+    @UploadedFile() image: UploadedImageInput | undefined,
+    @Body() dto: RecognizeHandwritingDto,
+  ) {
+    return this.handwritingService.recognizeHandwriting(image, dto);
   }
 }

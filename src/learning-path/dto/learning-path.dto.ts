@@ -14,20 +14,53 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import {
+  type LearningLanguageCode,
+  SUPPORTED_LEARNING_LANGUAGES,
+} from '../../common/constants/learning-languages.js';
 
-export const LEARNING_GOAL_BANDS = [
+export const ENGLISH_GOAL_BANDS = [
   'band_45_55',
   'band_55_65',
   'band_65_75',
+] as const;
+
+export const KOREAN_GOAL_BANDS = [
+  'topik_1_2',
+  'topik_3_4',
+  'topik_5_6',
+] as const;
+
+export const LEARNING_GOAL_BANDS = [
+  ...ENGLISH_GOAL_BANDS,
+  ...KOREAN_GOAL_BANDS,
 ] as const;
 export type LearningGoalBand = (typeof LEARNING_GOAL_BANDS)[number];
 
 export const CEFR_GOAL_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] as const;
 
+export class LearningPathOverviewQueryDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(48)
+  band?: string;
+
+  @ApiPropertyOptional({ enum: SUPPORTED_LEARNING_LANGUAGES })
+  @IsOptional()
+  @IsIn(SUPPORTED_LEARNING_LANGUAGES)
+  languageCode?: LearningLanguageCode;
+}
+
 export class UpdateLearningGoalDto {
   @ApiProperty({ enum: LEARNING_GOAL_BANDS })
   @IsIn(LEARNING_GOAL_BANDS)
   learningGoalBand: LearningGoalBand;
+
+  @ApiPropertyOptional({ enum: SUPPORTED_LEARNING_LANGUAGES })
+  @IsOptional()
+  @IsIn(SUPPORTED_LEARNING_LANGUAGES)
+  languageCode?: LearningLanguageCode;
 
   @ApiPropertyOptional({ enum: CEFR_GOAL_LEVELS })
   @IsOptional()
@@ -158,6 +191,11 @@ export class GenerateAiLearningPathDto {
   @IsOptional()
   @IsIn(['vi', 'en'])
   explanationLang?: 'vi' | 'en';
+
+  @ApiPropertyOptional({ enum: SUPPORTED_LEARNING_LANGUAGES, default: 'en' })
+  @IsOptional()
+  @IsIn(SUPPORTED_LEARNING_LANGUAGES)
+  languageCode?: LearningLanguageCode;
 }
 
 export class GenerateUnitStudyGuideDto {

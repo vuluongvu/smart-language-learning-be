@@ -77,16 +77,28 @@ describe('TopicsService', () => {
     service = module.get<TopicsService>(TopicsService);
   });
 
-  it('creates an English topic and rejects non-English MVP topics', async () => {
-    const created = await service.create(10, {
+  it('creates English and Korean topics and rejects unsupported languages', async () => {
+    const createdEn = await service.create(10, {
       name: '  Technology ',
       description: 'Tech terms',
     });
-    expect(created.name).toBe('Technology');
-    expect(created.vocabularyCount).toBe(0);
+    expect(createdEn.name).toBe('Technology');
+    expect(createdEn.vocabularyCount).toBe(0);
+
+    languagesService.findActiveByCode.mockResolvedValueOnce({
+      id: 2,
+      code: 'ko',
+      name: 'Korean',
+    });
+    const createdKo = await service.create(10, {
+      name: '  Korean Travel ',
+      languageCode: 'ko',
+    });
+    expect(createdKo.name).toBe('Korean Travel');
+    expect(createdKo.languageId).toBe(2);
 
     await expect(
-      service.create(10, { name: 'Korean', languageCode: 'ko' }),
+      service.create(10, { name: 'French', languageCode: 'fr' }),
     ).rejects.toThrow(BadRequestException);
   });
 

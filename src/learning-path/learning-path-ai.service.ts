@@ -1,6 +1,11 @@
 import { BadGatewayException, Injectable } from '@nestjs/common';
 import { AiService } from '../ai/ai.service.js';
 import {
+  getLearningLanguageDisplayName,
+  type LearningLanguageCode,
+  normalizeLearningLanguage,
+} from '../common/constants/learning-languages.js';
+import {
   UnitReadingListening,
   UnitReadingQuizQuestion,
   UnitStudyGuide,
@@ -57,17 +62,28 @@ const BAND_METADATA: Record<string, { bandLabel: string; targetCefr: string }> =
     band_45_55: { bandLabel: 'Band 4.5–5.5', targetCefr: 'B1' },
     band_55_65: { bandLabel: 'Band 5.5–6.5', targetCefr: 'B2' },
     band_65_75: { bandLabel: 'Band 6.5–7.5+', targetCefr: 'C1' },
+    topik_1_2: { bandLabel: 'TOPIK I (1–2급)', targetCefr: 'A2' },
+    topik_3_4: { bandLabel: 'TOPIK II (3–4급)', targetCefr: 'B1' },
+    topik_5_6: { bandLabel: 'TOPIK II (5–6급)', targetCefr: 'C1' },
   };
 
 @Injectable()
 export class LearningPathAiService {
   constructor(private readonly aiService: AiService) {}
 
-  resolveBandMetadata(bandCode: string): {
+  resolveBandMetadata(
+    bandCode: string,
+    languageCode: LearningLanguageCode = 'en',
+  ): {
     bandLabel: string;
     targetCefr: string;
   } {
-    return BAND_METADATA[bandCode] ?? BAND_METADATA.band_45_55;
+    if (BAND_METADATA[bandCode]) {
+      return BAND_METADATA[bandCode];
+    }
+    return languageCode === 'ko'
+      ? BAND_METADATA.topik_1_2
+      : BAND_METADATA.band_45_55;
   }
 
   async generatePathOutline(params: {
@@ -77,39 +93,47 @@ export class LearningPathAiService {
     currentLevel: string;
     unitCount: number;
     explanationLang: 'vi' | 'en';
+    languageCode?: LearningLanguageCode;
   }): Promise<AiPathOutline> {
+    const targetLang = normalizeLearningLanguage(params.languageCode);
+    const targetLangName = getLearningLanguageDisplayName(targetLang);
     const { bandLabel, targetCefr } = this.resolveBandMetadata(
       params.targetBand,
+      targetLang,
     );
     const explainLangName =
       params.explanationLang === 'en' ? 'English' : 'Vietnamese';
     const focusBlock = params.learningFocus?.trim()
       ? `\nLearning emphasis requested by learner: ${params.learningFocus.trim()}`
       : '';
+    const koreanNote =
+      targetLang === 'ko'
+        ? ` Write unit/track titles naturally for Korean learners (can pair Korean Hangul with short ${explainLangName} subtitle) and include Korean grammar points like particles or verb endings.`
+        : '';
 
     const { data } = await this.aiService.chatJson<Record<string, unknown>>(
       [
         {
           role: 'system',
           content:
-            `You design a structured English learning path curriculum purely from the learner's need and goal. Output ONLY valid JSON:\n` +
+            `You design a structured ${targetLangName} learning path curriculum purely from the learner's need and goal. Output ONLY valid JSON:\n` +
             `{\n` +
-            `  "trackTitle": "short English track title <= 50 chars",\n` +
+            `  "trackTitle": "short ${targetLangName} track title <= 50 chars",\n` +
             `  "trackSummary": "1 concise sentence in ${explainLangName} explaining what the learner masters",\n` +
-            `  "partTitle": "concise English part title",\n` +
+            `  "partTitle": "concise part title",\n` +
             `  "partSubtitle": "concise subtitle in ${explainLangName}",\n` +
             `  "units": [\n` +
             `    {\n` +
-            `      "title": "short English unit title",\n` +
-            `      "topicName": "Notebook topic name (2-4 words in English)",\n` +
-            `      "grammarFocus": "key English grammar or functional skill",\n` +
+            `      "title": "short unit title",\n` +
+            `      "topicName": "Notebook topic name (2-4 words)",\n` +
+            `      "grammarFocus": "key ${targetLangName} grammar or functional skill",\n` +
             `      "icon": "one of: home|clock|sparkles|globe|target|book-open|layers|folder|flame|bar-chart",\n` +
             `      "themeColor": "one of: green|pink|lavender|cream",\n` +
-            `      "speakingTopicPrompt": "clear 1-sentence speaking roleplay/discussion prompt in English"\n` +
+            `      "speakingTopicPrompt": "clear 1-sentence speaking roleplay/discussion prompt in ${explainLangName} or ${targetLangName}"\n` +
             `    }\n` +
             `  ]\n` +
             `}\n` +
-            `Rules: Produce exactly ${params.unitCount} progressively ordered units for a learner moving from CEFR ${params.currentLevel} toward ${bandLabel} (CEFR ${targetCefr}).`,
+            `Rules: Produce exactly ${params.unitCount} progressively ordered units for a learner moving from CEFR ${params.currentLevel} toward ${bandLabel} (CEFR ${targetCefr}).${koreanNote}`,
         },
         {
           role: 'user',
@@ -187,9 +211,13 @@ export class LearningPathAiService {
     learningFocus?: string;
     avoidTerms?: string[];
     explanationLang: 'vi' | 'en';
+    languageCode?: LearningLanguageCode;
   }): Promise<AiUnitStudyPack> {
+    const targetLang = normalizeLearningLanguage(params.languageCode);
+    const targetLangName = getLearningLanguageDisplayName(targetLang);
     const { bandLabel, targetCefr } = this.resolveBandMetadata(
       params.targetBand,
+      targetLang,
     );
     const explainLangName =
       params.explanationLang === 'en' ? 'English' : 'Vietnamese';
@@ -197,6 +225,12 @@ export class LearningPathAiService {
       params.explanationLang === 'en'
         ? 'concise clear English definition'
         : 'concise Vietnamese definition';
+    const pronRule =
+      targetLang === 'ko' ? '[Korean reading / Romanization]' : '/IPA/';
+    const posRule =
+      targetLang === 'ko'
+        ? 'noun|verb|adjective|adverb|phrase|particle|ending'
+        : 'noun|verb|adjective|adverb|phrase';
     const focusBlock = params.learningFocus?.trim()
       ? `\nEmphasis / preference: ${params.learningFocus.trim()}`
       : '';
@@ -209,31 +243,31 @@ export class LearningPathAiService {
       {
         role: 'system' as const,
         content:
-          `Create complete English study materials + 4-skill exercises for ONE unit calibrated to ${bandLabel} (CEFR ${targetCefr}). Explanation language: ${explainLangName}.\n` +
+          `Create complete ${targetLangName} study materials + 4-skill exercises for ONE unit calibrated to ${bandLabel} (CEFR ${targetCefr}). Explanation language: ${explainLangName}.\n` +
           `Return ONLY valid JSON with exact shape:\n` +
           `{\n` +
           `  "studyGuide": {\n` +
           `    "overview": "concise Markdown/plain overview in ${explainLangName} (2-3 sentences)",\n` +
-          `    "grammarPoints": [{"title":"rule title in ${explainLangName}","explanation":"clear explanation in ${explainLangName}","example":"natural English sentence"}],\n` +
-          `    "keyPatterns": [{"pattern":"English sentence template","meaning":"meaning in ${explainLangName}","example":"English example"}],\n` +
-          `    "commonMistakes": [{"mistake":"common wrong English sentence","correction":"natural corrected version","tip":"why in ${explainLangName}"}],\n` +
+          `    "grammarPoints": [{"title":"rule title in ${explainLangName}","explanation":"clear explanation in ${explainLangName}","example":"natural ${targetLangName} sentence"}],\n` +
+          `    "keyPatterns": [{"pattern":"${targetLangName} sentence template","meaning":"meaning in ${explainLangName}","example":"${targetLangName} example"}],\n` +
+          `    "commonMistakes": [{"mistake":"common wrong ${targetLangName} sentence","correction":"natural corrected version","tip":"why in ${explainLangName}"}],\n` +
           `    "studyTips": ["short practical tip in ${explainLangName}"]\n` +
           `  },\n` +
-          `  "vocabulary": [{"term":"word/phrase","pronunciation":"/IPA/","partOfSpeech":"noun|verb|adjective|adverb|phrase","definition":"${defLanguageRule}","example":"English sentence","notes":"usage note in ${explainLangName}"}],\n` +
+          `  "vocabulary": [{"term":"word/phrase in ${targetLangName}","pronunciation":"${pronRule}","partOfSpeech":"${posRule}","definition":"${defLanguageRule}","example":"natural ${targetLangName} sentence","notes":"usage note in ${explainLangName}"}],\n` +
           `  "readingListening": {\n` +
-          `    "title": "short English passage title",\n` +
-          `    "audioScript": "natural 80-110 word English passage/dialogue using the unit vocabulary words",\n` +
-          `    "translation": "${explainLangName === 'Vietnamese' ? 'natural Vietnamese translation of audioScript' : 'concise English summary'}",\n` +
-          `    "questions": [{"prompt":"English comprehension question","options":["A","B","C","D"],"correctIndex":0,"explanation":"short explanation in ${explainLangName}"}]\n` +
+          `    "title": "short ${targetLangName} passage title",\n` +
+          `    "audioScript": "natural 80-110 ${targetLang === 'ko' ? 'syllable/word Korean Hangul' : 'word English'} passage/dialogue using the unit vocabulary words",\n` +
+          `    "translation": "${explainLangName === 'Vietnamese' ? 'natural Vietnamese translation of audioScript' : 'concise English translation/summary'}",\n` +
+          `    "questions": [{"prompt":"comprehension question in ${explainLangName}","options":["A","B","C","D"],"correctIndex":0,"explanation":"short explanation in ${explainLangName}"}]\n` +
           `  },\n` +
           `  "writing": {\n` +
-          `    "prompt": "clear writing task in ${explainLangName} telling learner what to write in English",\n` +
+          `    "prompt": "clear writing task in ${explainLangName} telling learner what to write in ${targetLangName}",\n` +
           `    "minSentences": 4,\n` +
           `    "targetTerms": ["term1","term2","term3"],\n` +
-          `    "sampleAnswer": "well-written 4-5 sentence English model paragraph at ${bandLabel}"\n` +
+          `    "sampleAnswer": "well-written 4-5 sentence ${targetLangName} model paragraph at ${bandLabel}"\n` +
           `  }\n` +
           `}\n` +
-          `Rules: Provide 2 grammarPoints, 3 keyPatterns, 2 commonMistakes, 2 studyTips, 5 vocabulary items, and 3 MCQs each with 4 concise options.`,
+          `Rules: Provide 2 grammarPoints, 3 keyPatterns, 2 commonMistakes, 2 studyTips, 5 vocabulary items, and 3 MCQs each with 4 concise options.${targetLang === 'ko' ? ' All Korean terms, examples, audioScript, and sampleAnswer MUST be written in Korean Hangul.' : ''}`,
       },
       {
         role: 'user' as const,
@@ -265,6 +299,7 @@ export class LearningPathAiService {
       params.unit,
       bandLabel,
       params.explanationLang,
+      targetLang,
     );
   }
 
@@ -276,7 +311,10 @@ export class LearningPathAiService {
     cefrLevel: string;
     focusGoal?: string;
     explanationLang: 'vi' | 'en';
+    languageCode?: LearningLanguageCode;
   }): Promise<UnitStudyGuide> {
+    const targetLang = normalizeLearningLanguage(params.languageCode);
+    const targetLangName = getLearningLanguageDisplayName(targetLang);
     const explainLangName =
       params.explanationLang === 'en' ? 'English' : 'Vietnamese';
     const focusBlock = params.focusGoal?.trim()
@@ -288,12 +326,12 @@ export class LearningPathAiService {
         {
           role: 'system',
           content:
-            `Create a focused English study guide for Unit "${params.unitTitle}" calibrated to ${params.bandLabel} (CEFR ${params.cefrLevel}). Explanation language: ${explainLangName}.\n` +
+            `Create a focused ${targetLangName} study guide for Unit "${params.unitTitle}" calibrated to ${params.bandLabel} (CEFR ${params.cefrLevel}). Explanation language: ${explainLangName}.\n` +
             `Return ONLY valid JSON:\n` +
             `{\n` +
             `  "overview": "concise summary in ${explainLangName} (2-3 sentences)",\n` +
-            `  "grammarPoints": [{"title":"rule title","explanation":"clear rule in ${explainLangName}","example":"natural English example"}],\n` +
-            `  "keyPatterns": [{"pattern":"English sentence frame","meaning":"meaning in ${explainLangName}","example":"English sentence"}],\n` +
+            `  "grammarPoints": [{"title":"rule title","explanation":"clear rule in ${explainLangName}","example":"natural ${targetLangName} example"}],\n` +
+            `  "keyPatterns": [{"pattern":"${targetLangName} sentence frame","meaning":"meaning in ${explainLangName}","example":"${targetLangName} sentence"}],\n` +
             `  "commonMistakes": [{"mistake":"typical learner error","correction":"natural correction","tip":"short tip in ${explainLangName}"}],\n` +
             `  "studyTips": ["actionable study tip in ${explainLangName}"]\n` +
             `}\n` +
@@ -314,6 +352,7 @@ export class LearningPathAiService {
       params.unitTitle,
       params.grammarFocus,
       params.explanationLang,
+      targetLang,
     );
     if (!sanitized.overview && sanitized.grammarPoints.length === 0) {
       throw new BadGatewayException(
@@ -328,6 +367,7 @@ export class LearningPathAiService {
     unit: AiUnitOutlineItem,
     bandLabel: string,
     lang: 'vi' | 'en',
+    targetLang: LearningLanguageCode = 'en',
   ): AiUnitStudyPack {
     const vocabSource =
       raw.vocabulary ?? raw.words ?? raw.vocab ?? raw.terms ?? [];
@@ -359,13 +399,19 @@ export class LearningPathAiService {
         definition,
         example:
           this.cleanString(obj.example ?? obj.sentence, 400) ??
-          `In discussions on ${unit.topicName}, "${term}" helps express a precise point.`,
+          (targetLang === 'ko'
+            ? `"${term}" 표현을 일상 대화에서 자연스럽게 사용해 보세요.`
+            : `In discussions on ${unit.topicName}, "${term}" helps express a precise point.`),
         notes: this.cleanString(obj.notes ?? obj.note ?? obj.tip, 300) ?? '',
       });
     }
 
     if (vocabulary.length < 4) {
-      const fallbackEntries = this.buildFallbackUnitVocabulary(unit, lang);
+      const fallbackEntries = this.buildFallbackUnitVocabulary(
+        unit,
+        lang,
+        targetLang,
+      );
       for (const entry of fallbackEntries) {
         if (vocabulary.length >= 4) break;
         const norm = entry.term.toLowerCase();
@@ -395,7 +441,7 @@ export class LearningPathAiService {
           raw.audioScript ??
           raw.passage,
         2500,
-      ) ?? this.buildFallbackAudioScript(unit, vocabulary);
+      ) ?? this.buildFallbackAudioScript(unit, vocabulary, targetLang);
 
     const questionsCandidate =
       rlRaw.questions ?? rlRaw.quiz ?? raw.questions ?? raw.quiz ?? [];
@@ -478,12 +524,15 @@ export class LearningPathAiService {
       unit.title,
       unit.grammarFocus,
       lang,
+      targetLang,
     );
 
+    const targetLangVi = targetLang === 'ko' ? 'tiếng Hàn' : 'tiếng Anh';
+    const targetLangEn = targetLang === 'ko' ? 'Korean' : 'English';
     const defaultPrompt =
       lang === 'vi'
-        ? `Viết 4–5 câu tiếng Anh về chủ đề "${unit.title}", cố gắng sử dụng các từ mục tiêu và cấu trúc ${unit.grammarFocus}.`
-        : `Write 4–5 English sentences about "${unit.title}" using the target vocabulary and ${unit.grammarFocus}.`;
+        ? `Viết 4–5 câu ${targetLangVi} về chủ đề "${unit.title}", cố gắng sử dụng các từ mục tiêu và cấu trúc ${unit.grammarFocus}.`
+        : `Write 4–5 ${targetLangEn} sentences about "${unit.title}" using the target vocabulary and ${unit.grammarFocus}.`;
 
     const rawMinSentences = Number(writingRaw.minSentences);
     const minSentences =
@@ -529,8 +578,55 @@ export class LearningPathAiService {
   private buildFallbackUnitVocabulary(
     unit: AiUnitOutlineItem,
     lang: 'vi' | 'en',
+    targetLang: LearningLanguageCode = 'en',
   ): UnitVocabWord[] {
     const isVi = lang === 'vi';
+    if (targetLang === 'ko') {
+      return [
+        {
+          term: '표현하다',
+          pronunciation: '[표현하다 / pyohyeonhada]',
+          partOfSpeech: 'verb',
+          definition: isVi
+            ? 'Diễn đạt, thể hiện suy nghĩ hoặc cảm xúc'
+            : 'To express ideas or feelings clearly',
+          example: '자기 생각을 한국어로 자연스럽게 표현해 보세요.',
+          notes: isVi ? 'Chia lịch sự: 표현해요.' : 'Polite form: 표현해요.',
+        },
+        {
+          term: '상황',
+          pronunciation: '[상황 / sanghwang]',
+          partOfSpeech: 'noun',
+          definition: isVi ? 'Tình huống, hoàn cảnh' : 'Situation or context',
+          example: '상황에 맞는 높임말을 사용하는 것이 중요해요.',
+          notes: isVi
+            ? 'Cụm hay gặp: 상황에 따라 (tùy theo tình huống).'
+            : 'Common phrase: 상황에 따라.',
+        },
+        {
+          term: '경험',
+          pronunciation: '[경험 / gyeongheom]',
+          partOfSpeech: 'noun',
+          definition: isVi ? 'Trải nghiệm, kinh nghiệm' : 'Personal experience',
+          example: '한국에서 생활해 본 경험이 정말 도움이 되었어요.',
+          notes: isVi
+            ? 'Đi kèm động từ 하다 hoặc -(으)ㄴ 적이 있다.'
+            : 'Often used with -(으)ㄴ 적이 있다.',
+        },
+        {
+          term: '자연스럽다',
+          pronunciation: '[자연스럽따 / jayeonseureopda]',
+          partOfSpeech: 'adjective',
+          definition: isVi
+            ? 'Tự nhiên, trôi chảy'
+            : 'Natural and fluent in expression',
+          example: '자주 연습하면 발음이 훨씬 자연스러워져요.',
+          notes: isVi
+            ? 'Bất quy tắc ㅂ -> 자연스러워요.'
+            : 'ㅂ-irregular: 자연스러워요.',
+        },
+      ];
+    }
     return [
       {
         term: 'perspective',
@@ -586,7 +682,16 @@ export class LearningPathAiService {
   private buildFallbackAudioScript(
     unit: AiUnitOutlineItem,
     vocabulary: UnitVocabWord[],
+    targetLang: LearningLanguageCode = 'en',
   ): string {
+    if (targetLang === 'ko') {
+      const terms = vocabulary.slice(0, 4).map((v) => v.term);
+      return (
+        `이번 단원에서는 "${unit.title}" 주제로 한국어 표현을 연습합니다. ` +
+        `${terms.join(', ')} 같은 핵심 어휘와 ${unit.grammarFocus} 문법을 함께 사용하면 다양한 상황에서 자신의 생각을 자연스럽게 표현할 수 있습니다. ` +
+        `짧은 문장부터 소리 내어 읽고 반복해 보세요.`
+      );
+    }
     const terms = vocabulary.slice(0, 4).map((v) => v.term);
     const t0 = terms[0] ?? 'perspective';
     const t1 = terms[1] ?? 'articulate';
@@ -660,6 +765,7 @@ export class LearningPathAiService {
     unitTitle: string,
     grammarFocus: string,
     lang: 'vi' | 'en',
+    targetLang: LearningLanguageCode = 'en',
   ): UnitStudyGuide {
     const grammarPoints: UnitStudyGrammarPoint[] = [];
     for (const g of (Array.isArray(raw.grammarPoints)
@@ -727,7 +833,10 @@ export class LearningPathAiService {
           lang === 'vi'
             ? `Áp dụng ${grammarFocus} để diễn đạt ý chính rõ ràng và chính xác trong bài "${unitTitle}".`
             : `Apply ${grammarFocus} to express key ideas clearly and accurately in "${unitTitle}".`,
-        example: `When discussing ${unitTitle.toLowerCase()}, structure each sentence around ${grammarFocus.toLowerCase()}.`,
+        example:
+          targetLang === 'ko'
+            ? `${grammarFocus} 문법을 활용하여 "${unitTitle}" 주제의 문장을 자연스럽게 만들어 보세요.`
+            : `When discussing ${unitTitle.toLowerCase()}, structure each sentence around ${grammarFocus.toLowerCase()}.`,
       });
     }
 

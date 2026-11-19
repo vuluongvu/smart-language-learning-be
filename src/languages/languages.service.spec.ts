@@ -40,7 +40,7 @@ describe('LanguagesService', () => {
 
   it('throws NotFoundException for unknown language code', async () => {
     repo.findOne.mockResolvedValue(null);
-    await expect(service.findActiveByCode('ko')).rejects.toThrow(
+    await expect(service.findActiveByCode('fr')).rejects.toThrow(
       NotFoundException,
     );
   });

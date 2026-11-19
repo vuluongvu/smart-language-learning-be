@@ -99,6 +99,7 @@ describe('AiConversationService', () => {
       topic: 'Travel',
       level: 'B1',
       explanationLang: 'vi',
+      languageCode: 'en',
       status: 'active',
       turnCount: 0,
       summaryJson: null,
@@ -177,6 +178,7 @@ describe('AiConversationService', () => {
       topic: 'Travel',
       level: 'B1',
       explanationLang: 'vi',
+      languageCode: 'en',
       status: 'active',
       turnCount: 1,
       summaryJson: null,
@@ -278,5 +280,35 @@ describe('AiConversationService', () => {
     await expect(service.startSession(5, { topic: 'Work' })).rejects.toThrow(
       BadGatewayException,
     );
+  });
+
+  it('supports Korean Hangul guided conversation sessions and filters sessions by languageCode', async () => {
+    aiService.chatJson.mockResolvedValue({
+      model: 'qwen/qwen3.8-27b',
+      data: {
+        greeting: '안녕하세요! 서울 카페 연습을 시작해 볼까요?',
+        openingQuestion: '보통 카페에서 무슨 음료를 자주 주문해요?',
+      },
+    });
+
+    const detail = await service.startSession(5, {
+      languageCode: 'ko',
+      topic: '카페에서 주문하기',
+      level: 'A2',
+      explanationLang: 'vi',
+    });
+
+    expect(detail.languageCode).toBe('ko');
+    expect(detail.turns[0].aiPrompt).toContain('안녕하세요');
+    const [promptMessages] = aiService.chatJson.mock.calls[0];
+    expect(promptMessages[0].content).toContain('Korean conversation coach');
+
+    sessionRepo.find.mockResolvedValue([]);
+    await service.listSessions(5, 'ko');
+    expect(sessionRepo.find).toHaveBeenCalledWith({
+      where: { userId: 5, languageCode: 'ko' },
+      order: { updatedAt: 'DESC', id: 'DESC' },
+      take: 20,
+    });
   });
 });

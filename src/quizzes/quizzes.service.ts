@@ -7,6 +7,11 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import {
+  getLearningLanguageDisplayName,
+  type LearningLanguageCode,
+  normalizeLearningLanguage,
+} from '../common/constants/learning-languages.js';
+import {
   PaginationMeta,
   PaginationQueryDto,
 } from '../common/dto/pagination-query.dto.js';
@@ -50,6 +55,7 @@ export interface QuizSummaryView {
   id: number;
   title: string;
   description: string | null;
+  languageCode: string;
   topicId: number | null;
   topicName: string | null;
   difficulty: QuizDifficulty | null;
@@ -84,6 +90,7 @@ export interface QuizDetailView {
   id: number;
   title: string;
   description: string | null;
+  languageCode: string;
   topicId: number | null;
   topicName: string | null;
   difficulty: QuizDifficulty | null;
@@ -202,6 +209,11 @@ export class QuizzesService {
       .createQueryBuilder('quiz')
       .where('quiz.userId = :userId', { userId });
 
+    if (query.languageCode) {
+      qb.andWhere('quiz.languageCode = :languageCode', {
+        languageCode: query.languageCode,
+      });
+    }
     if (query.topicId) {
       qb.andWhere('quiz.topicId = :topicId', { topicId: query.topicId });
     }
@@ -256,6 +268,7 @@ export class QuizzesService {
           id: quiz.id,
           title: quiz.title,
           description: quiz.description,
+          languageCode: quiz.languageCode ?? 'en',
           topicId: quiz.topicId,
           topicName: quiz.topicId
             ? (topicNames.get(quiz.topicId) ?? null)
@@ -292,6 +305,7 @@ export class QuizzesService {
       id: quiz.id,
       title: quiz.title,
       description: quiz.description,
+      languageCode: quiz.languageCode ?? 'en',
       topicId: quiz.topicId,
       topicName: quiz.topicId ? (topicNames.get(quiz.topicId) ?? null) : null,
       difficulty: quiz.difficulty,
@@ -325,6 +339,7 @@ export class QuizzesService {
     const status = dto.status ?? QuizStatus.DRAFT;
     const questions = dto.questions ?? [];
     const topicId = dto.topicId ?? null;
+    const languageCode = normalizeLearningLanguage(dto.languageCode);
 
     if (topicId !== null) {
       await this.topicsService.findOwnedTopicsByIds(userId, [topicId]);
@@ -342,6 +357,7 @@ export class QuizzesService {
         quizRepo.create({
           userId,
           topicId,
+          languageCode,
           title,
           description: this.normalizeOptional(dto.description),
           difficulty: dto.difficulty ?? null,
@@ -460,6 +476,12 @@ export class QuizzesService {
             QuestionType.FILL_BLANK,
           ];
     const targetCount = dto.count ?? 5;
+    const requestedLangCode: LearningLanguageCode | null = dto.languageCode
+      ? normalizeLearningLanguage(dto.languageCode)
+      : null;
+    const scopedLanguage = requestedLangCode
+      ? await this.languagesService.findActiveByCode(requestedLangCode)
+      : null;
 
     let selectedItems: VocabularyItem[] = [];
     if (dto.vocabularyIds && dto.vocabularyIds.length > 0) {
@@ -481,7 +503,9 @@ export class QuizzesService {
       }
     } else {
       selectedItems = await this.vocabularyRepository.find({
-        where: { userId },
+        where: scopedLanguage
+          ? { userId, languageId: scopedLanguage.id }
+          : { userId },
         order: { createdAt: 'DESC', id: 'DESC' },
         take: Math.max(targetCount * 2, 20),
       });
@@ -493,11 +517,18 @@ export class QuizzesService {
       );
     }
 
+    const effectiveLanguageId =
+      scopedLanguage?.id ?? selectedItems[0]?.languageId ?? null;
     const poolItems = await this.vocabularyRepository.find({
-      where: { userId },
+      where: effectiveLanguageId
+        ? { userId, languageId: effectiveLanguageId }
+        : { userId },
       order: { id: 'DESC' },
       take: 100,
     });
+    const langDisplayName = getLearningLanguageDisplayName(
+      requestedLangCode ?? 'en',
+    );
 
     const needsChoicesOnly = requestedTypes.every(
       (t) => t !== QuestionType.FILL_BLANK,
@@ -532,7 +563,7 @@ export class QuizzesService {
         return {
           vocabularyId: item.id,
           vocabularyTerm: item.term,
-          questionText: this.buildFillBlankPrompt(item),
+          questionText: this.buildFillBlankPrompt(item, langDisplayName),
           questionType: QuestionType.FILL_BLANK,
           explanation,
           options: [{ optionText: item.term, isCorrect: true }],
@@ -591,7 +622,7 @@ export class QuizzesService {
       return {
         vocabularyId: item.id,
         vocabularyTerm: item.term,
-        questionText: `Which English word or phrase matches: "${item.definition.trim()}"?`,
+        questionText: `Which ${langDisplayName} word or phrase matches: "${item.definition.trim()}"?`,
         questionType: QuestionType.MULTIPLE_CHOICE,
         explanation,
         options,
@@ -613,11 +644,12 @@ export class QuizzesService {
     await this.topicsService.findOwnedTopicsByIds(userId, requestedTopicIds);
 
     const newTopicName = dto.newTopicName?.trim() || null;
-    const english =
+    const requestedLanguageCode = normalizeLearningLanguage(dto.languageCode);
+    const activeLanguage =
       newTopicName || !dto.existingVocabularyId
-        ? await this.languagesService.findActiveByCode('en')
+        ? await this.languagesService.findActiveByCode(requestedLanguageCode)
         : null;
-    const languageId = english?.id ?? null;
+    const languageId = activeLanguage?.id ?? null;
     const trimmedTerm = dto.term?.trim() ?? '';
     const trimmedDefinition = dto.definition?.trim() ?? '';
 
@@ -1076,6 +1108,14 @@ export class QuizzesService {
       .createQueryBuilder('attempt')
       .where('attempt.userId = :userId', { userId });
 
+    if (query.languageCode) {
+      qb.innerJoin(
+        Quiz,
+        'quizLangFilter',
+        'quizLangFilter.id = attempt.quizId AND quizLangFilter.language_code = :languageCode',
+        { languageCode: query.languageCode },
+      );
+    }
     if (query.quizId) {
       qb.andWhere('attempt.quizId = :quizId', { quizId: query.quizId });
     }
@@ -1384,7 +1424,10 @@ export class QuizzesService {
     return map;
   }
 
-  private buildFillBlankPrompt(item: VocabularyItem): string {
+  private buildFillBlankPrompt(
+    item: VocabularyItem,
+    langDisplayName = 'English',
+  ): string {
     const example = item.example?.trim();
     const term = item.term.trim();
     if (example) {
@@ -1403,7 +1446,7 @@ export class QuizzesService {
       }
     }
 
-    return `Type the English word or phrase that means: "${item.definition.trim()}"`;
+    return `Type the ${langDisplayName} word or phrase that means: "${item.definition.trim()}"`;
   }
 
   private shuffleArray<T>(list: T[]): T[] {

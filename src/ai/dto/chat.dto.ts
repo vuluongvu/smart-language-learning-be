@@ -13,6 +13,10 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import {
+  type LearningLanguageCode,
+  SUPPORTED_LEARNING_LANGUAGES,
+} from '../../common/constants/learning-languages.js';
 
 export class ChatHistoryMessageDto {
   @ApiProperty({ enum: ['user', 'assistant'] })
@@ -49,4 +53,9 @@ export class ChatDto {
   @Min(0)
   @Max(2)
   temperature?: number;
+
+  @ApiPropertyOptional({ enum: SUPPORTED_LEARNING_LANGUAGES, default: 'en' })
+  @IsOptional()
+  @IsIn(SUPPORTED_LEARNING_LANGUAGES)
+  languageCode?: LearningLanguageCode;
 }
